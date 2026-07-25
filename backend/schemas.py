@@ -33,6 +33,13 @@ class Protagonist(BaseModel):
     desire: str
     fear: str
 
+class StoryCharacter(BaseModel):
+    name: str
+    role: str
+    relationship_to_protagonist: str
+    want: str
+    secret_or_tension: str
+
 class CreativeDNA(BaseModel):
     core_emotion: str
     audience_promise: str
@@ -41,6 +48,10 @@ class CreativeDNA(BaseModel):
     symbols: list[str]
     non_negotiables: list[str]
     tone: list[str]
+    genre: list[str] = []
+    story_references: list[str] = []
+    characters: list[StoryCharacter] = []
+    premise: str = ""
     creative_freedom: int = Field(ge=0, le=100)
     locked_fields: list[str] = []
 

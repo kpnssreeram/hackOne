@@ -176,9 +176,24 @@ async def run_script_generation(
     async def live():
         return await generate_script(dna, selection, visions, emit_token)
 
+    def dynamic_script_fallback() -> ProductionScript:
+        name = dna.protagonist.name.upper()
+        counterpart = next((c.name.upper() for c in dna.characters if c.name.lower() != dna.protagonist.name.lower()), "VOICE")
+        return ProductionScript(
+            title=f"{dna.protagonist.name}: The First Turning",
+            estimated_duration_seconds=70,
+            lines=[
+                {"type": "ambience", "description": f"atmosphere of {dna.genre[0] if dna.genre else 'an intimate drama'}", "duration_seconds": 2},
+                {"type": "dialogue", "character": name, "text": dna.central_conflict, "emotion": dna.core_emotion},
+                {"type": "silence", "duration_seconds": 1},
+                {"type": "dialogue", "character": counterpart, "text": dna.non_negotiables[0] if dna.non_negotiables else "You are asking the wrong question.", "emotion": "guarded"},
+                {"type": "music", "description": "a single unresolved musical turn", "duration_seconds": 3},
+            ],
+        )
+
     script, _ = await with_resilience(
         stage="script", provider="openai", fn=live,
-        fallback_fn=lambda: FIXTURE_PRODUCTION_SCRIPT,
+        fallback_fn=dynamic_script_fallback,
         emit_fallback=lambda msg: emit(sid, "writer", "fallback", msg),
     )
     await emit(sid, "writer", "artifact", script.model_dump())
@@ -336,15 +351,18 @@ async def run_revision_workflow(session_id: str, change_req: ChangeRequest):
 
             raw, _ = await with_resilience(
                 stage="revision", provider="openai", fn=live,
-                fallback_fn=lambda: FIXTURE_REVISION_DIFF.model_dump(),
+                fallback_fn=lambda: {
+                    "change_request": change_req.change_instruction,
+                    "affected_scene_ids": ["pilot-opening", "pilot-cliffhanger"],
+                    "preserved_elements": change_req.preserve_elements or s.creative_dna.non_negotiables,
+                    "locked_elements": s.creative_dna.locked_fields,
+                    "changed_scenes": [],
+                },
                 emit_fallback=lambda msg: emit(sid, "supervisor", "fallback", msg),
             )
-            if isinstance(raw, dict):
-                diff = FIXTURE_REVISION_DIFF  # safe fallback shape
-            else:
-                diff = raw
+            diff = raw
 
-        s.creative_lock_diff = diff if not isinstance(diff, dict) else FIXTURE_REVISION_DIFF
+        s.creative_lock_diff = diff if not isinstance(diff, dict) else CreativeLockDiff.model_validate(diff)
         save_session(s)
 
         await emit(sid, "supervisor", "artifact", {

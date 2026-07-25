@@ -25,6 +25,8 @@ type DNA = {
   protagonist: { name: string; desire: string; fear: string }
   central_conflict: string; symbols: string[]
   non_negotiables: string[]; tone: string[]
+  genre?: string[]; story_references?: string[]
+  characters?: Array<{ name: string; role: string; relationship_to_protagonist: string; want: string; secret_or_tension: string }>
   creative_freedom: number; locked_fields: string[]
 }
 
@@ -51,6 +53,8 @@ export default function SessionPage() {
   const [step, setStep] = useState<Step>('dna')
   const [busy, setBusy] = useState(false)
   const [sseUrl, setSseUrl] = useState<string | null>(null)
+  const [transcriptDraft, setTranscriptDraft] = useState(transcript)
+  const [storyApproved, setStoryApproved] = useState(false)
 
   const [dna, setDna] = useState<DNA | null>(null)
   const [lockedFields, setLockedFields] = useState<Set<string>>(new Set())
@@ -136,15 +140,15 @@ export default function SessionPage() {
 
   // ─── Boot: extract DNA on load ──────────────────────────────────────────────
   useEffect(() => {
-    if (!transcript || !sessionId) return
+    if (!storyApproved || !transcriptDraft.trim() || !sessionId) return
     ;(async () => {
       setBusy(true)
       setSseUrl(api.eventsUrl(sessionId))
       pushLine('muse', `Listening for the heart of your story…`)
-      const result = await api.extractDNA(sessionId, transcript)
+      const result = await api.extractDNA(sessionId, transcriptDraft)
       if (result?.core_emotion) { setDna(result); setStep('visions'); setBusy(false) }
     })()
-  }, [transcript, sessionId])
+  }, [storyApproved, transcriptDraft, sessionId, pushLine])
 
   // ─── Actions ──────────────────────────────────────────────────────────────────
   async function doGenerateVisions() {
@@ -247,6 +251,22 @@ export default function SessionPage() {
         {/* LEFT — Main content (3 cols) */}
         <div className="lg:col-span-3 p-5 flex flex-col gap-5 overflow-y-auto">
 
+          {!dna && !busy && (
+            <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-5">
+              <p className="text-xs uppercase tracking-[0.2em] text-nolan-accent">Nolan heard this</p>
+              <h1 className="text-2xl font-bold text-white mt-2">Is this your story?</h1>
+              <p className="text-sm text-nolan-muted mt-1">Edit anything before Nolan creates the people, world, genre, and episode.</p>
+              <textarea value={transcriptDraft} onChange={e => setTranscriptDraft(e.target.value)} rows={6}
+                className="w-full mt-4 bg-black/20 border border-nolan-border rounded-xl p-4 text-sm text-white resize-none focus:outline-none focus:border-nolan-accent" />
+              <button onClick={() => setStoryApproved(true)} disabled={!transcriptDraft.trim()}
+                className="w-full mt-3 py-3 bg-nolan-accent text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-40">
+                <Sparkles className="w-4 h-4" /> Yes — build my story
+              </button>
+            </motion.section>
+          )}
+
+          {!dna && busy && <div className="glass rounded-2xl p-8 text-center"><Loader2 className="w-7 h-7 text-nolan-accent animate-spin mx-auto" /><p className="text-white mt-3">Nolan is finding the people and world inside your story…</p></div>}
+
           {/* ── STEP 1: Creative DNA ── */}
           {dna && (
             <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
@@ -256,10 +276,12 @@ export default function SessionPage() {
                 <p className="text-[11px] uppercase tracking-[0.2em] text-nolan-accent mb-2">Your main character</p>
                 <h1 className="text-3xl font-bold text-white">{dna.protagonist.name}</h1>
                 <p className="text-nolan-muted text-sm mt-1">Wants to {dna.protagonist.desire} — but fears {dna.protagonist.fear}.</p>
+                <div className="flex gap-2 flex-wrap mt-3">{(dna.genre || []).map((g: string) => <Tag key={g} text={g} color="purple" />)}{(dna.story_references || []).map((r: string) => <Tag key={r} text={`inspired by ${r}`} color="default" />)}</div>
                 <div className="grid sm:grid-cols-2 gap-3 mt-5">
                   <div className="rounded-xl bg-black/20 p-3"><p className="text-[10px] uppercase tracking-widest text-nolan-muted">The feeling</p><p className="text-sm text-white mt-1">{dna.core_emotion}</p></div>
                   <div className="rounded-xl bg-black/20 p-3"><p className="text-[10px] uppercase tracking-widest text-nolan-muted">The problem</p><p className="text-sm text-white mt-1">{dna.central_conflict}</p></div>
                 </div>
+                {(dna.characters || []).length > 1 && <div className="mt-4"><p className="text-[10px] uppercase tracking-widest text-nolan-muted mb-2">The people in this episode</p><div className="grid sm:grid-cols-2 gap-2">{(dna.characters || []).filter((c: any) => c.name !== dna.protagonist.name).map((c: any) => <div key={c.name} className="rounded-xl bg-black/20 p-3"><p className="text-sm text-white">{c.name} <span className="text-nolan-muted">· {c.role}</span></p><p className="text-[11px] text-nolan-muted mt-1">{c.relationship_to_protagonist} — {c.secret_or_tension}</p></div>)}</div></div>}
                 <p className="text-xs text-nolan-gold mt-4">We will protect: {dna.non_negotiables.join(' · ')}</p>
                 <div className="flex gap-2 flex-wrap pt-3">{dna.tone.map(t => <Tag key={t} text={t} color="purple" />)}{dna.symbols.map(s => <Tag key={s} text={s} color="default" />)}</div>
               </div>
