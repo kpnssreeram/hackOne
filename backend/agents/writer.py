@@ -49,6 +49,10 @@ CRITICAL RULES:
 5. Keep dialogue sharp — 1-2 sentences per line max
 
 Return ONLY valid JSON matching ProductionScript schema. No markdown.
+
+Return this exact shape, with no wrapper or `scenes` field:
+{"title":"string","estimated_duration_seconds":75,"lines":[{"type":"ambience","description":"string","duration_seconds":2},{"type":"dialogue","character":"NAME","text":"string","emotion":"string"},{"type":"silence","duration_seconds":1},{"type":"sfx","description":"string","duration_seconds":1}]}
+Write 10-14 lines, including at least 7 dialogue lines. Every named character must come from the Creative DNA.
 """
 
 
@@ -197,21 +201,25 @@ async def generate_script(
         return ProductionScript(**data)
 
     log.warning("Writer: script JSON parse failed — minimal fallback")
-    # Minimal dynamic fallback script
+    # A full audio-native fallback: it remains specific to the creator's
+    # people and premise, and is long enough to be a meaningful playable pilot.
     name = dna.protagonist.name
+    companion = next((c.name for c in dna.characters if c.name.lower() != name.lower()), "Voice")
     return ProductionScript(
         title=f"{name}'s Story — Pilot",
         estimated_duration_seconds=75,
         lines=[
-            ProductionLine(type="ambience", description="quiet city night, distant sounds", duration_seconds=2.0),
-            ProductionLine(type="silence", duration_seconds=1.5),
-            ProductionLine(type="dialogue", character=name.upper(), text=f"This is not what I expected.", emotion="uncertain"),
-            ProductionLine(type="silence", duration_seconds=0.8),
-            ProductionLine(type="dialogue", character=name.upper(), text=dna.central_conflict[:100], emotion="conflicted"),
-            ProductionLine(type="sfx", description="phone notification sound", duration_seconds=0.5),
-            ProductionLine(type="dialogue", character=name.upper(), text="Who are you?", emotion="alarmed"),
-            ProductionLine(type="silence", duration_seconds=1.0),
-            ProductionLine(type="dialogue", character="VOICE", text=dna.non_negotiables[0][:80] if dna.non_negotiables else "I know the truth.", emotion="calm, deliberate"),
-            ProductionLine(type="music", description="low strings, unresolved chord", duration_seconds=3.0),
+            ProductionLine(type="ambience", description=f"a tense {dna.genre[0] if dna.genre else 'drama'} atmosphere", duration_seconds=3.0),
+            ProductionLine(type="dialogue", character=name.upper(), text="Everybody stay close. I know this place, and I know we can get through it.", emotion="trying to be brave"),
+            ProductionLine(type="sfx", description="distant alarm and hurried footsteps", duration_seconds=1.5),
+            ProductionLine(type="dialogue", character=companion.upper(), text=f"{name}, this is bigger than a dream. What do we do now?", emotion="afraid"),
+            ProductionLine(type="dialogue", character=name.upper(), text=f"We protect each other first. Then we face what is coming.", emotion="resolute"),
+            ProductionLine(type="silence", duration_seconds=1.2),
+            ProductionLine(type="dialogue", character=companion.upper(), text="You do not have to prove you are a hero alone.", emotion="steadying"),
+            ProductionLine(type="dialogue", character=name.upper(), text=dna.central_conflict[:140], emotion="honest"),
+            ProductionLine(type="sfx", description="a door creaks open nearby", duration_seconds=1.0),
+            ProductionLine(type="dialogue", character="UNKNOWN VOICE", text=dna.non_negotiables[0][:120] if dna.non_negotiables else "You were never meant to find this.", emotion="distorted and threatening"),
+            ProductionLine(type="dialogue", character=name.upper(), text="Then you should not have left a way in.", emotion="defiant"),
+            ProductionLine(type="music", description="rising unresolved score", duration_seconds=4.0),
         ],
     )
