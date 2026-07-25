@@ -353,8 +353,13 @@ export default function SessionPage() {
           )}
         </div>
 
-        {/* RIGHT — Terminal + Controls (2 cols) */}
-        <div className="lg:col-span-2 border-l border-nolan-border/50 flex flex-col">
+        {/* Advanced controls stay out of the first-time creator flow. */}
+        <details className="lg:col-span-2 border-l border-nolan-border/50 group">
+          <summary className="cursor-pointer list-none px-5 py-4 text-xs text-nolan-muted hover:text-white flex items-center gap-2">
+            <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90" />
+            Behind the scenes — refine the story or see Nolan at work
+          </summary>
+          <div className="flex flex-col border-t border-nolan-border/30">
 
           {/* Terminal */}
           <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
@@ -420,7 +425,8 @@ export default function SessionPage() {
               )}
             </AnimatePresence>
           </div>
-        </div>
+          </div>
+        </details>
       </div>
     </div>
   )
