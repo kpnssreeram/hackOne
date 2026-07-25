@@ -46,8 +46,10 @@ async def emit(session_id: str, agent: str, event_type: str, data):
     await q.put({"agent": agent, "type": event_type, "data": data})
 
 async def close_stream(session_id: str):
-    q = get_queue(session_id)
-    await q.put(None)
+    # The browser opens a fresh SSE subscription for each stage.  Do not leave
+    # a terminal sentinel in the shared queue: it would instantly close the
+    # next stage before it could receive Writer/Supervisor events.
+    return None
 
 
 # ─── Session persistence (in-memory + disk) ───────────────────────────────────
@@ -277,13 +279,17 @@ async def run_audio_render(
         mix_timeline(timeline, out_path)
         return f"/audio/{sid}/pilot.mp3"
 
-    url, _ = await with_resilience(
+    url, degraded = await with_resilience(
         stage="audio", provider="elevenlabs", fn=live,
-        fallback_fn=lambda: f"/audio/{sid}/pilot.mp3",
+        # Never claim an audio URL exists when ElevenLabs/mixing failed.
+        fallback_fn=lambda: "",
         emit_fallback=lambda msg: emit(sid, "audio_director", "fallback", msg),
     )
-    await emit(sid, "audio_director", "complete", {"url": url})
-    return url
+    if url and out_path.exists() and out_path.stat().st_size > 0:
+        await emit(sid, "audio_director", "complete", {"url": url})
+        return url
+    await emit(sid, "audio_director", "error", "Audio could not be rendered. Your production script is still ready.")
+    return ""
 
 
 # ─── Main Produce Workflow ────────────────────────────────────────────────────
@@ -303,7 +309,9 @@ async def run_produce_workflow(session_id: str):
             update_status(s, WorkflowStatus.VISIONS_READY)
 
         # 2. Vision selected — generate script
-        if s.selected_vision and s.visions and s.status == WorkflowStatus.VISIONS_READY:
+        # /produce records the creator's selection before this background
+        # workflow starts, so VISION_SELECTED is the valid transition here.
+        if s.selected_vision and s.visions and s.status == WorkflowStatus.VISION_SELECTED:
             script = await run_script_generation(sid, s.creative_dna, s.selected_vision, s.visions)
             s.production_script = script
             update_status(s, WorkflowStatus.SCRIPT_DRAFTED)

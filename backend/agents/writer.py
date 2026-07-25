@@ -55,13 +55,15 @@ Return ONLY valid JSON matching ProductionScript schema. No markdown.
 def _dynamic_vision_fallback(dna: CreativeDNA) -> list[VisionCard]:
     """Dynamic fallback using actual DNA — not hardcoded Maya story."""
     name = dna.protagonist.name
-    conflict = dna.central_conflict[:60]
+    conflict = dna.central_conflict[:90]
+    companions = [c.name for c in dna.characters if c.name.lower() != name.lower()]
+    team = ", ".join(companions) if companions else "the people closest to them"
     return [
         VisionCard(
             id="fractured_time",
             title="Fractured Time",
             grammar="Nonlinear — audience discovers truth before protagonist",
-            premise=f"{name} is already at the end. We watch them piece together how they got here.",
+            premise=f"{name} hears the aftermath first, then reconstructs how saving the school pulled {team} into danger.",
             opening_preview=f"[AMBIENCE: tense silence]\n{name.upper()}: This is not how it was supposed to end.\n[SFX: phone rings]\n[SILENCE: 1.0s]\n{name.upper()}: I know who you are.",
             emotional_trajectory="Disorientation → dread → terrible clarity",
             cliffhanger_type="Temporal — the call was made before the event happened",
@@ -72,7 +74,7 @@ def _dynamic_vision_fallback(dna: CreativeDNA) -> list[VisionCard]:
             id="emotional_intimacy",
             title="Emotional Intimacy",
             grammar="Relationship-first — silence and restraint carry more than action",
-            premise=f"{name} sits with the weight of what they know, unable to tell anyone.",
+            premise=f"{name}, {team}, and one unspoken fear discover that heroism only works when nobody is left behind.",
             opening_preview=f"[AMBIENCE: quiet room, distant traffic]\n[SILENCE: 2.0s]\n{name.upper()} [quietly]: I found out today.\n[SILENCE: 1.2s]\n{name.upper()}: I can't tell anyone.",
             emotional_trajectory="Quiet grief → impossible choice → devastating tenderness",
             cliffhanger_type="Emotional — someone already knows",
@@ -83,7 +85,7 @@ def _dynamic_vision_fallback(dna: CreativeDNA) -> list[VisionCard]:
             id="kinetic_mystery",
             title="Kinetic Mystery",
             grammar="Immediate danger — reversal every 90 seconds",
-            premise=f"{name} has 24 hours to find the truth before it finds them.",
+            premise=f"{name} must get {team} out of the school before the danger turns their dream of heroism into a real loss.",
             opening_preview=f"[SFX: running footsteps]\n{name.upper()} [breathless]: The door won't open.\n[SFX: phone rings — unknown number]\n{name.upper()}: Hello?\n[SILENCE: 0.5s]\nVOICE [distorted]: Stop looking.",
             emotional_trajectory="Panic → grim focus → shocking reversal → breathless cliffhanger",
             cliffhanger_type="Physical — the threat was already inside",
@@ -130,6 +132,12 @@ async def generate_visions(dna: CreativeDNA, emit_token) -> list[VisionCard]:
     if match:
         data = json.loads(match.group())
         visions = [VisionCard(**v) for v in data]
+        # A generic or stale-model vision breaks the creator's trust.  Only
+        # accept a treatment when it demonstrably carries the chosen hero.
+        hero = dna.protagonist.name.lower()
+        if len(visions) != 3 or any(hero not in f"{v.premise} {v.opening_preview}".lower() for v in visions):
+            log.warning("Writer: generated visions lost the protagonist — using grounded treatment set")
+            return _dynamic_vision_fallback(dna)
         log.info("Writer: %d visions generated", len(visions))
         return visions
 
@@ -182,6 +190,10 @@ async def generate_script(
     match = re.search(r'\{.*\}', raw, re.DOTALL)
     if match:
         data = json.loads(match.group())
+        # Some otherwise-valid model responses wrap the requested payload.
+        # Accept that stable envelope instead of throwing away a real script.
+        if isinstance(data.get("production_script"), dict):
+            data = data["production_script"]
         return ProductionScript(**data)
 
     log.warning("Writer: script JSON parse failed — minimal fallback")

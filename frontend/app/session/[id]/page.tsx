@@ -38,10 +38,12 @@ type Vision = {
 
 type TermLine = { agent: string; text: string; type: string }
 type Check = { rule_number: number; rule: string; passed: boolean; evidence: string; reason?: string; repair?: string }
+type StudioUpdate = { role: string; text: string; color: 'purple' | 'blue' | 'gold' }
 
 const AGENT_COLOR: Record<string, string> = {
   muse: 'text-purple-400', writer: 'text-blue-400',
   supervisor: 'text-yellow-400', audio_director: 'text-green-400',
+  director: 'text-purple-400',
 }
 
 export default function SessionPage() {
@@ -58,6 +60,7 @@ export default function SessionPage() {
   const [protagonistHint, setProtagonistHint] = useState('')
   const [characterHints, setCharacterHints] = useState('')
   const [storyError, setStoryError] = useState('')
+  const [studioUpdate, setStudioUpdate] = useState<StudioUpdate>({ role: 'Muse', text: 'Ready to discover the heart of your story.', color: 'purple' })
 
   const [dna, setDna] = useState<DNA | null>(null)
   const [lockedFields, setLockedFields] = useState<Set<string>>(new Set())
@@ -72,6 +75,7 @@ export default function SessionPage() {
   const [score, setScore] = useState<number | null>(null)
 
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
+  const [audioError, setAudioError] = useState('')
   const [playing, setPlaying] = useState(false)
 
   const [revise, setRevise] = useState('')
@@ -108,9 +112,17 @@ export default function SessionPage() {
       return ''
     })
 
-    if (e.type === 'status')   pushLine(e.agent, String(e.data), 'status')
+    if (e.type === 'status') {
+      pushLine(e.agent, String(e.data), 'status')
+      const room = e.agent === 'writer' ? { role: 'Writer', color: 'blue' as const }
+        : e.agent === 'supervisor' ? { role: 'Supervisor', color: 'gold' as const }
+        : e.agent === 'audio_director' ? { role: 'Audio Director', color: 'gold' as const }
+        : { role: 'Muse', color: 'purple' as const }
+      setStudioUpdate({ ...room, text: String(e.data) })
+    }
     if (e.type === 'fallback') pushLine(e.agent, `⚡ ${e.data}`, 'fallback')
     if (e.type === 'error')    pushLine(e.agent, `✗ ${e.data}`, 'error')
+    if (e.type === 'error' && e.agent === 'audio_director') setAudioError(String(e.data))
 
     if (e.type === 'violation') {
       const c = e.data as Check
@@ -121,6 +133,15 @@ export default function SessionPage() {
       const d = e.data
       // DNA arrived
       if (d?.core_emotion) { setDna(d); setStep('visions'); setBusy(false) }
+      // Vision artifacts arrive one at a time over SSE. Keeping them here
+      // avoids a fragile one-shot poll and makes the three-card audition real.
+      if (d?.id && d?.opening_preview) {
+        setVisions(prev => prev.some(v => v.id === d.id) ? prev.map(v => v.id === d.id ? d : v) : [...prev, d])
+        setBusy(false)
+      }
+      if (d?.rule_number && d?.rule) {
+        setChecks(prev => [...prev.filter(x => x.rule_number !== d.rule_number), d])
+      }
       // Constitution score
       if (d?.score !== undefined) setScore(d.score)
       // Creative lock diff
@@ -132,8 +153,7 @@ export default function SessionPage() {
 
     if (e.type === 'complete') {
       const d = typeof e.data === 'object' ? e.data : {}
-      if (d.visions_count) setStep('production')
-      if (d.status === 'READY' || d.audio_url) {
+      if (d.url || d.audio_url) {
         setAudioUrl(api.audioUrl(sessionId))
         setStep('audio')
       }
@@ -144,6 +164,29 @@ export default function SessionPage() {
 
   useSSE(sseUrl, handleSSE)
 
+  // A refresh must restore the actual session artifacts, not replay stale UI
+  // state from an earlier stream. This also lets a creator return to a pilot.
+  useEffect(() => {
+    if (!sessionId) return
+    ;(async () => {
+      try {
+        const saved = await api.getSession(sessionId)
+        if (!saved?.creative_dna) return
+        setDna(saved.creative_dna)
+        setVisions(saved.visions || [])
+        setChecks(saved.constitution_report?.checks || [])
+        if (saved.audio_url) {
+          setAudioUrl(api.audioUrl(sessionId))
+          setStep('audio')
+        } else if ((saved.visions || []).length) {
+          setStep('visions')
+        }
+      } catch {
+        // A brand-new session has no saved artifacts yet.
+      }
+    })()
+  }, [sessionId])
+
   // ─── Boot: extract DNA on load ──────────────────────────────────────────────
   useEffect(() => {
     if (!storyApproved || !transcriptDraft.trim() || !sessionId) return
@@ -151,6 +194,7 @@ export default function SessionPage() {
       setBusy(true)
       setStoryError('')
       setSseUrl(api.eventsUrl(sessionId))
+      setStudioUpdate({ role: 'Muse', text: 'Finding the people, genre, and emotional truth in your idea.', color: 'purple' })
       pushLine('director', 'Reading the dream and finding its cinematic world.')
       try {
         const optionalDetails = [
@@ -177,14 +221,21 @@ export default function SessionPage() {
     setBusy(true)
     setStep('visions')
     setSseUrl(api.eventsUrl(sessionId))
+    setStudioUpdate({ role: 'Writer', text: 'Auditioning three genuinely different ways to tell this story.', color: 'blue' })
     pushLine('writer', 'Finding three ways your story could feel…')
-    const res = await api.generateVisions(sessionId)
-    // Visions arrive via SSE artifacts
-    // Poll session as fallback
-    setTimeout(async () => {
-      const s = await api.getSession(sessionId)
-      if (s.visions?.length) { setVisions(s.visions); setBusy(false) }
-    }, 3000)
+    try {
+      await api.generateVisions(sessionId)
+      // SSE is primary; polling remains a reliable fallback for slow browsers.
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 1500))
+        const s = await api.getSession(sessionId)
+        if (s.visions?.length) { setVisions(s.visions); setBusy(false); break }
+      }
+    } catch (error) {
+      console.error(error)
+      setBusy(false)
+      pushLine('writer', 'The three treatments could not be loaded. Try again.')
+    }
   }
 
   async function doProduce() {
@@ -192,6 +243,7 @@ export default function SessionPage() {
     setBusy(true)
     setStep('production')
     setSseUrl(api.eventsUrl(sessionId))
+    setStudioUpdate({ role: 'Writer', text: 'Turning your chosen treatment into an audio-native pilot.', color: 'blue' })
     pushLine('writer', 'Turning your chosen story into an episode…')
     await api.produce(sessionId, {
       primary_vision_id: selectedVision,
@@ -295,9 +347,7 @@ export default function SessionPage() {
 
           {!dna && busy && <div className="glass rounded-2xl p-7 space-y-4">
             <div className="flex items-center gap-3"><Loader2 className="w-6 h-6 text-nolan-accent animate-spin" /><div><p className="text-white font-semibold">Your story room is working</p><p className="text-xs text-nolan-muted">Usually ready in a few seconds.</p></div></div>
-            <StudioNote role="Director" text="I can see the world, genre, and emotional turn." color="purple" />
-            <StudioNote role="Writer" text="I’m giving each person a reason to be in this episode." color="blue" />
-            <StudioNote role="Supervisor" text="I’m keeping the details you mentioned intact." color="gold" />
+            <StudioNote role={studioUpdate.role} text={studioUpdate.text} color={studioUpdate.color} />
           </div>}
 
           {/* ── STEP 1: Creative DNA ── */}
@@ -406,6 +456,8 @@ export default function SessionPage() {
               </div>
             </motion.section>
           )}
+
+          {audioError && !audioUrl && <div className="glass rounded-xl p-4 border border-yellow-400/20"><p className="text-sm text-yellow-100">The production script is ready; audio needs one more render.</p><p className="text-xs text-nolan-muted mt-1">{audioError}</p></div>}
         </div>
 
         {/* Advanced controls stay out of the first-time creator flow. */}

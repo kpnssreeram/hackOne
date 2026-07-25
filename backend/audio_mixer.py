@@ -4,7 +4,7 @@ Stitches TTS lines + silence gaps + SFX/ambience stubs.
 Falls back gracefully if ffmpeg / pydub unavailable.
 """
 from __future__ import annotations
-import os
+import os, shutil
 from pathlib import Path
 import logging
 
@@ -24,14 +24,16 @@ def mix_timeline(timeline: list[dict], out_path: Path) -> Path:
     Mix a timeline of {type, path?, duration?, description?} into one MP3.
     Returns path to the mixed file.
     """
-    if not _pydub_available():
-        log.warning("pydub not available — returning first dialogue track as pilot")
+    # pydub can import without ffmpeg, but cannot decode/export MP3 without it.
+    # In that environment we still return an honest, playable ElevenLabs take
+    # rather than advertising a pilot that was never written to disk.
+    if not _pydub_available() or not (shutil.which("ffmpeg") or shutil.which("avconv")):
+        log.warning("audio mixer unavailable — returning first dialogue track as pilot")
         for entry in timeline:
             if entry.get("path") and Path(entry["path"]).exists():
-                import shutil
                 shutil.copy(entry["path"], out_path)
                 return out_path
-        return out_path
+        raise RuntimeError("No synthesised dialogue track is available for the pilot")
 
     from pydub import AudioSegment
 

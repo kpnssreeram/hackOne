@@ -43,7 +43,9 @@ async def synthesise_line(
     if voice_note and "whisper" in voice_note.lower():
         settings = VoiceSettings(stability=0.75, similarity_boost=0.9, style=0.0)
 
-    audio_gen = await el.text_to_speech.convert(
+    # The ElevenLabs async SDK returns an async generator directly. Awaiting it
+    # raises before a single byte is generated.
+    audio_gen = el.text_to_speech.convert(
         voice_id=voice_id,
         text=text,
         model_id=MODEL,
