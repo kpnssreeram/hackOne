@@ -6,25 +6,22 @@ from __future__ import annotations
 import asyncio, json, os, uuid
 from pathlib import Path
 from typing import Callable, Awaitable
-
-from openai import AsyncOpenAI
 from schemas import (
     Session, WorkflowStatus, CreativeDNA, VisionCard,
     VisionSelection, ProductionScript, ConstitutionReport,
     CreativeLockDiff, ChangeRequest,
 )
 from resilience import with_resilience
-from fixtures import get_fixture, FIXTURE_DNA, FIXTURE_VISIONS, FIXTURE_PRODUCTION_SCRIPT, FIXTURE_CONSTITUTION, FIXTURE_REVISION_DIFF
-from agents.muse import extract_dna
-from agents.writer import generate_visions, generate_script
-from agents.supervisor import check_constitution, analyze_change_impact
+from fixtures import FIXTURE_REVISION_DIFF
+from agents.muse import extract_dna, _fallback_dna_from_transcript
+from agents.writer import generate_visions, generate_script, _dynamic_vision_fallback
+from agents.supervisor import check_constitution, analyze_change_impact, _dynamic_constitution_fallback
 from agents.audio_director import generate_voice_lines
 from agents.voice_cameo import clone_voice, preview_cameo, delete_cameo
 from audio_mixer import mix_timeline
 import logging
 
 log = logging.getLogger("nolan.workflow")
-oai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 NOLAN_MODE = os.getenv("NOLAN_MODE", "hybrid")
 SESSIONS_DIR = Path(__file__).parent / "sessions"
 SESSIONS_DIR.mkdir(exist_ok=True)
@@ -128,7 +125,7 @@ async def run_dna_extraction(session_id: str, transcript: str) -> CreativeDNA:
 
     dna, degraded = await with_resilience(
         stage="dna", provider="openai", fn=live,
-        fallback_fn=lambda: FIXTURE_DNA,
+        fallback_fn=lambda: _fallback_dna_from_transcript(transcript),
         emit_fallback=lambda msg: emit(sid, "muse", "fallback", msg),
     )
     await emit(sid, "muse", "artifact", dna.model_dump())
@@ -152,7 +149,7 @@ async def run_vision_generation(session_id: str, dna: CreativeDNA) -> list[Visio
 
     visions, degraded = await with_resilience(
         stage="visions", provider="openai", fn=live,
-        fallback_fn=lambda: FIXTURE_VISIONS,
+        fallback_fn=lambda: _dynamic_vision_fallback(dna),
         emit_fallback=lambda msg: emit(sid, "writer", "fallback", msg),
     )
     for v in visions:
@@ -212,7 +209,7 @@ async def run_constitution_check(
 
     report, _ = await with_resilience(
         stage="constitution", provider="openai", fn=live,
-        fallback_fn=lambda: FIXTURE_CONSTITUTION,
+        fallback_fn=lambda: _dynamic_constitution_fallback(script),
         emit_fallback=lambda msg: emit(sid, "supervisor", "fallback", msg),
     )
     for check in report.checks:
