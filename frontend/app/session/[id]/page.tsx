@@ -12,10 +12,10 @@ import {
 
 // ─── Step definition ──────────────────────────────────────────────────────────
 const STEPS = [
-  { id: 'dna',         label: 'Creative DNA',    icon: Sparkles  },
-  { id: 'visions',     label: '3 Visions',       icon: GitBranch },
-  { id: 'production',  label: 'Production',      icon: Shield    },
-  { id: 'audio',       label: 'Audio Pilot',     icon: Volume2   },
+  { id: 'dna',         label: 'Your story',      icon: Sparkles  },
+  { id: 'visions',     label: 'Choose a feeling',icon: GitBranch },
+  { id: 'production',  label: 'Make it real',    icon: Shield    },
+  { id: 'audio',       label: 'Your episode',    icon: Volume2   },
 ]
 
 type Step = 'dna' | 'visions' | 'production' | 'audio'
@@ -140,7 +140,7 @@ export default function SessionPage() {
     ;(async () => {
       setBusy(true)
       setSseUrl(api.eventsUrl(sessionId))
-      pushLine('muse', `Analysing: "${transcript.slice(0, 70)}..."`)
+      pushLine('muse', `Listening for the heart of your story…`)
       const result = await api.extractDNA(sessionId, transcript)
       if (result?.core_emotion) { setDna(result); setStep('visions'); setBusy(false) }
     })()
@@ -152,7 +152,7 @@ export default function SessionPage() {
     setBusy(true)
     setStep('visions')
     setSseUrl(api.eventsUrl(sessionId))
-    pushLine('writer', 'Auditioning 3 directorial visions...')
+    pushLine('writer', 'Finding three ways your story could feel…')
     const res = await api.generateVisions(sessionId)
     // Visions arrive via SSE artifacts
     // Poll session as fallback
@@ -167,7 +167,7 @@ export default function SessionPage() {
     setBusy(true)
     setStep('production')
     setSseUrl(api.eventsUrl(sessionId))
-    pushLine('writer', 'Composing production script...')
+    pushLine('writer', 'Turning your chosen story into an episode…')
     await api.produce(sessionId, {
       primary_vision_id: selectedVision,
       opening_from: selectedVision,
@@ -212,7 +212,7 @@ export default function SessionPage() {
       <header className="flex items-center justify-between px-6 py-3 border-b border-nolan-border/50">
         <div className="flex items-center gap-2">
           <Radio className="w-4 h-4 text-nolan-accent" />
-          <span className="font-bold text-sm tracking-wider">NOLAN</span>
+          <span className="font-bold text-sm tracking-wider">NOLAN <span className="text-nolan-muted font-normal">/ dream studio</span></span>
         </div>
 
         {/* Step progress */}
@@ -250,22 +250,23 @@ export default function SessionPage() {
           {/* ── STEP 1: Creative DNA ── */}
           {dna && (
             <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-              <SectionHeader icon={<Sparkles className="w-4 h-4 text-purple-400" />} label="Creative DNA" badge={`${dna.creative_freedom}% creative freedom`} />
-              <div className="glass rounded-xl p-4 space-y-2 mt-2">
-                <DNARow label="Core Emotion"     value={dna.core_emotion}         field="core_emotion"     locked={lockedFields} onToggle={toggleLock} />
-                <DNARow label="Audience Promise" value={dna.audience_promise}     field="audience_promise" locked={lockedFields} onToggle={toggleLock} />
-                <DNARow label="Protagonist"      value={`${dna.protagonist.name} — wants: ${dna.protagonist.desire}`} field="protagonist" locked={lockedFields} onToggle={toggleLock} />
-                <DNARow label="Central Conflict" value={dna.central_conflict}     field="central_conflict" locked={lockedFields} onToggle={toggleLock} />
-                <DNARow label="Must Preserve"    value={dna.non_negotiables.join(' · ')} field="non_negotiables" locked={lockedFields} onToggle={toggleLock} highlight />
-                <div className="flex gap-2 flex-wrap pt-1">
-                  {dna.tone.map(t => <Tag key={t} text={t} color="purple" />)}
-                  {dna.symbols.map(s => <Tag key={s} text={s} color="default" />)}
+              <SectionHeader icon={<Sparkles className="w-4 h-4 text-purple-400" />} label="Nolan heard your story" badge="You can change this later" />
+              <div className="glass rounded-2xl p-5 mt-2 overflow-hidden relative">
+                <div className="absolute -right-12 -top-12 w-40 h-40 bg-nolan-accent/20 blur-3xl rounded-full" />
+                <p className="text-[11px] uppercase tracking-[0.2em] text-nolan-accent mb-2">Your main character</p>
+                <h1 className="text-3xl font-bold text-white">{dna.protagonist.name}</h1>
+                <p className="text-nolan-muted text-sm mt-1">Wants to {dna.protagonist.desire} — but fears {dna.protagonist.fear}.</p>
+                <div className="grid sm:grid-cols-2 gap-3 mt-5">
+                  <div className="rounded-xl bg-black/20 p-3"><p className="text-[10px] uppercase tracking-widest text-nolan-muted">The feeling</p><p className="text-sm text-white mt-1">{dna.core_emotion}</p></div>
+                  <div className="rounded-xl bg-black/20 p-3"><p className="text-[10px] uppercase tracking-widest text-nolan-muted">The problem</p><p className="text-sm text-white mt-1">{dna.central_conflict}</p></div>
                 </div>
+                <p className="text-xs text-nolan-gold mt-4">We will protect: {dna.non_negotiables.join(' · ')}</p>
+                <div className="flex gap-2 flex-wrap pt-3">{dna.tone.map(t => <Tag key={t} text={t} color="purple" />)}{dna.symbols.map(s => <Tag key={s} text={s} color="default" />)}</div>
               </div>
               {step === 'visions' && visions.length === 0 && (
                 <button onClick={doGenerateVisions} disabled={busy}
                   className="mt-3 w-full py-2.5 bg-nolan-accent text-white rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2">
-                  <GitBranch className="w-4 h-4" /> Audition 3 Directorial Visions
+                  <GitBranch className="w-4 h-4" /> Show me three ways this could feel
                 </button>
               )}
             </motion.section>
@@ -274,7 +275,7 @@ export default function SessionPage() {
           {/* ── STEP 2: Visions ── */}
           {visions.length > 0 && (
             <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-              <SectionHeader icon={<GitBranch className="w-4 h-4 text-blue-400" />} label="Directorial Visions" badge="Pick one to produce" />
+              <SectionHeader icon={<GitBranch className="w-4 h-4 text-blue-400" />} label="Choose the feeling" badge="Pick the version you would play first" />
               <div className="space-y-3 mt-2">
                 {visions.map(v => (
                   <VisionCard key={v.id} vision={v} selected={selectedVision === v.id}
@@ -284,7 +285,7 @@ export default function SessionPage() {
               {selectedVision && (
                 <button onClick={doProduce} disabled={busy}
                   className="mt-3 w-full py-2.5 bg-nolan-accent text-white rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2">
-                  <Wand2 className="w-4 h-4" /> Produce Pilot
+                  <Wand2 className="w-4 h-4" /> Make my first episode
                 </button>
               )}
             </motion.section>
@@ -294,7 +295,7 @@ export default function SessionPage() {
           {checks.length > 0 && (
             <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
               <SectionHeader icon={<Shield className="w-4 h-4 text-yellow-400" />}
-                label="Story Constitution" badge={score !== null ? `Score: ${score}/100` : undefined} />
+                label="Your story is ready" badge={score !== null ? `${score}/100 story-ready` : undefined} />
               <div className="glass rounded-xl p-4 space-y-2 mt-2">
                 {checks.sort((a,b) => a.rule_number - b.rule_number).map(c => (
                   <ConstitutionRow key={c.rule_number} check={c} />
@@ -363,7 +364,7 @@ export default function SessionPage() {
                 <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/70" />
                 <span className="w-2.5 h-2.5 rounded-full bg-green-500/70" />
               </span>
-              <span className="text-xs text-nolan-muted ml-1 tracking-widest">AGENT LOG</span>
+              <span className="text-xs text-nolan-muted ml-1 tracking-widest">BEHIND THE SCENES</span>
               {busy && <span className="ml-auto flex items-center gap-1 text-xs text-nolan-accent">
                 <span className="w-1.5 h-1.5 rounded-full bg-nolan-accent animate-pulse" /> LIVE
               </span>}
@@ -389,18 +390,18 @@ export default function SessionPage() {
               <span className="text-xs font-bold text-nolan-gold tracking-wider">SEMANTIC CREATIVE LOCK</span>
             </div>
             <p className="text-nolan-muted text-xs mb-2">
-              Change anything without losing everything. Lock fields in DNA first.
+              Want to change the story? Nolan keeps the parts you love and rewrites the rest.
             </p>
             <textarea
               value={revise}
               onChange={e => setRevise(e.target.value)}
-              placeholder="Make the brother dangerous, but preserve the final reveal."
+              placeholder="Try: make it sadder, but keep Maya's final choice."
               rows={2}
               className="w-full bg-nolan-surface border border-nolan-border/70 rounded-lg p-2.5 text-xs text-nolan-text placeholder:text-nolan-muted/40 resize-none focus:outline-none focus:border-nolan-gold transition-colors"
             />
             <button onClick={doRevise} disabled={busy || !revise.trim()}
               className="mt-2 w-full py-2 border border-nolan-gold/60 text-nolan-gold rounded-lg text-xs font-semibold hover:bg-nolan-gold/10 disabled:opacity-30 transition-all flex items-center justify-center gap-2">
-              <RefreshCw className="w-3 h-3" /> Apply Lock
+              <RefreshCw className="w-3 h-3" /> Update my story
             </button>
 
             {/* Lock diff result */}

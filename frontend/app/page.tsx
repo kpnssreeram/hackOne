@@ -93,10 +93,10 @@ export default function Home() {
           <h1 className="text-5xl font-bold tracking-tight text-white">NOLAN</h1>
         </div>
         <p className="text-nolan-muted text-base mt-2">
-          Tell me a dream, a memory, or a rough idea.
+          Tell Nolan a dream, a memory, or one messy thought.
         </p>
         <p className="text-nolan-accent text-sm font-medium mt-1">
-          I'll turn it into a cinematic audio pilot.
+          We’ll find the characters, the feeling, and the episode hiding inside it.
         </p>
       </motion.div>
 
@@ -162,7 +162,7 @@ export default function Home() {
               >
                 {loading
                   ? <><Loader2 className="w-4 h-4 animate-spin" /> {status}</>
-                  : <><Sparkles className="w-4 h-4" /> Compile Imagination <ArrowRight className="w-4 h-4" /></>
+                  : <><Sparkles className="w-4 h-4" /> Tell Nolan my story <ArrowRight className="w-4 h-4" /></>
                 }
               </button>
             </motion.div>
@@ -210,7 +210,7 @@ export default function Home() {
         transition={{ delay: 0.4 }}
         className="mt-10 flex items-center gap-3 text-xs text-nolan-muted"
       >
-        {['Your idea', 'Creative DNA', '3 Visions', 'Story Check', 'Audio Pilot'].map((step, i, arr) => (
+        {['Your idea', 'Meet the story', 'Choose a feeling', 'First episode'].map((step, i, arr) => (
           <span key={step} className="flex items-center gap-3">
             <span className="text-center">
               <span className="block w-6 h-6 rounded-full bg-nolan-surface border border-nolan-border text-nolan-muted text-[10px] flex items-center justify-center mx-auto mb-1">{i + 1}</span>
