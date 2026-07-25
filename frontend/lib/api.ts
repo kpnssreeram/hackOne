@@ -3,6 +3,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 export const api = {
   async createSession() {
     const r = await fetch(`${API}/api/sessions`, { method: 'POST' })
+    if (!r.ok) throw new Error(await r.text())
     return r.json()
   },
   async submitAudio(sessionId: string, fd: FormData) {
@@ -15,6 +16,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ transcript }),
     })
+    if (!r.ok) throw new Error(await r.text())
     return r.json()
   },
   async updateDNA(sessionId: string, dna: any) {

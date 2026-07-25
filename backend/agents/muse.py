@@ -14,7 +14,7 @@ log = logging.getLogger("nolan.muse")
 client = AsyncOpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
     max_retries=0,
-    timeout=28.0,
+    timeout=9.0,
 )
 
 SYSTEM_PROMPT = """You are the Muse — the first AI agent in Nolan, an audio storytelling studio.
@@ -134,7 +134,7 @@ async def extract_dna(transcript: str, emit_token) -> CreativeDNA:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f'Input: "{transcript}"\n\nThink briefly about the core emotion, then output the JSON.'},
         ],
-        max_tokens=700,
+        max_tokens=500,
         stream=True,
     )
     full = ""

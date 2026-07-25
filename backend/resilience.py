@@ -14,7 +14,8 @@ T = TypeVar("T")
 
 STAGE_TIMEOUTS: dict[str, float] = {
     "transcribe":   float(os.getenv("TIMEOUT_TRANSCRIBE",   "20")),
-    "dna":          float(os.getenv("TIMEOUT_DNA",          "30")),
+    # The first interaction must stay demo-fast; use the input-aware fallback.
+    "dna":          float(os.getenv("TIMEOUT_DNA",          "10")),
     "visions":      float(os.getenv("TIMEOUT_VISIONS",      "40")),
     "script":       float(os.getenv("TIMEOUT_SCRIPT",       "40")),
     "constitution": float(os.getenv("TIMEOUT_CONSTITUTION", "30")),

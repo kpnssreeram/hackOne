@@ -55,6 +55,9 @@ export default function SessionPage() {
   const [sseUrl, setSseUrl] = useState<string | null>(null)
   const [transcriptDraft, setTranscriptDraft] = useState(transcript)
   const [storyApproved, setStoryApproved] = useState(false)
+  const [protagonistHint, setProtagonistHint] = useState('')
+  const [characterHints, setCharacterHints] = useState('')
+  const [storyError, setStoryError] = useState('')
 
   const [dna, setDna] = useState<DNA | null>(null)
   const [lockedFields, setLockedFields] = useState<Set<string>>(new Set())
@@ -92,6 +95,9 @@ export default function SessionPage() {
   // ─── SSE handler ─────────────────────────────────────────────────────────────
   const handleSSE = useCallback((e: any) => {
     if (e.type === 'token') {
+      // Muse streams its machine-readable brief. The creator sees the finished
+      // story card, not a wall of JSON.
+      if (e.agent === 'muse') return
       setTokenBuf(prev => prev + (typeof e.data === 'string' ? e.data : ''))
       return
     }
@@ -143,12 +149,27 @@ export default function SessionPage() {
     if (!storyApproved || !transcriptDraft.trim() || !sessionId) return
     ;(async () => {
       setBusy(true)
+      setStoryError('')
       setSseUrl(api.eventsUrl(sessionId))
-      pushLine('muse', `Listening for the heart of your story…`)
-      const result = await api.extractDNA(sessionId, transcriptDraft)
-      if (result?.core_emotion) { setDna(result); setStep('visions'); setBusy(false) }
+      pushLine('director', 'Reading the dream and finding its cinematic world.')
+      try {
+        const optionalDetails = [
+          protagonistHint.trim() && `The protagonist should be called ${protagonistHint.trim()}.`,
+          characterHints.trim() && `Important characters to include: ${characterHints.trim()}.`,
+        ].filter(Boolean).join(' ')
+        const result = await api.extractDNA(sessionId, `${transcriptDraft}\n\n${optionalDetails}`.trim())
+        if (result?.core_emotion) { setDna(result); setStep('visions') }
+        else throw new Error('Nolan could not read the story.')
+      } catch (error) {
+        console.error(error)
+        setStoryError('Nolan could not shape that yet. Please try once more — your words are still here.')
+        pushLine('director', 'Let’s take one more pass at your story.')
+      } finally {
+        setBusy(false)
+        setSseUrl(null)
+      }
     })()
-  }, [storyApproved, transcriptDraft, sessionId, pushLine])
+  }, [storyApproved, sessionId, pushLine])
 
   // ─── Actions ──────────────────────────────────────────────────────────────────
   async function doGenerateVisions() {
@@ -258,6 +279,13 @@ export default function SessionPage() {
               <p className="text-sm text-nolan-muted mt-1">Edit anything before Nolan creates the people, world, genre, and episode.</p>
               <textarea value={transcriptDraft} onChange={e => setTranscriptDraft(e.target.value)} rows={6}
                 className="w-full mt-4 bg-black/20 border border-nolan-border rounded-xl p-4 text-sm text-white resize-none focus:outline-none focus:border-nolan-accent" />
+              <div className="grid sm:grid-cols-2 gap-2 mt-3">
+                <input value={protagonistHint} onChange={e => setProtagonistHint(e.target.value)} placeholder="Main character name (optional)"
+                  className="bg-black/20 border border-nolan-border rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-nolan-muted/50 focus:outline-none focus:border-nolan-accent" />
+                <input value={characterHints} onChange={e => setCharacterHints(e.target.value)} placeholder="Other people to include (optional)"
+                  className="bg-black/20 border border-nolan-border rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-nolan-muted/50 focus:outline-none focus:border-nolan-accent" />
+              </div>
+              {storyError && <p className="mt-3 text-xs text-red-300">{storyError}</p>}
               <button onClick={() => setStoryApproved(true)} disabled={!transcriptDraft.trim()}
                 className="w-full mt-3 py-3 bg-nolan-accent text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-40">
                 <Sparkles className="w-4 h-4" /> Yes — build my story
@@ -265,7 +293,12 @@ export default function SessionPage() {
             </motion.section>
           )}
 
-          {!dna && busy && <div className="glass rounded-2xl p-8 text-center"><Loader2 className="w-7 h-7 text-nolan-accent animate-spin mx-auto" /><p className="text-white mt-3">Nolan is finding the people and world inside your story…</p></div>}
+          {!dna && busy && <div className="glass rounded-2xl p-7 space-y-4">
+            <div className="flex items-center gap-3"><Loader2 className="w-6 h-6 text-nolan-accent animate-spin" /><div><p className="text-white font-semibold">Your story room is working</p><p className="text-xs text-nolan-muted">Usually ready in a few seconds.</p></div></div>
+            <StudioNote role="Director" text="I can see the world, genre, and emotional turn." color="purple" />
+            <StudioNote role="Writer" text="I’m giving each person a reason to be in this episode." color="blue" />
+            <StudioNote role="Supervisor" text="I’m keeping the details you mentioned intact." color="gold" />
+          </div>}
 
           {/* ── STEP 1: Creative DNA ── */}
           {dna && (
@@ -379,7 +412,7 @@ export default function SessionPage() {
         <details className="lg:col-span-2 border-l border-nolan-border/50 group">
           <summary className="cursor-pointer list-none px-5 py-4 text-xs text-nolan-muted hover:text-white flex items-center gap-2">
             <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90" />
-            Behind the scenes — refine the story or see Nolan at work
+            Studio room — see the creative team at work
           </summary>
           <div className="flex flex-col border-t border-nolan-border/30">
 
@@ -391,7 +424,7 @@ export default function SessionPage() {
                 <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/70" />
                 <span className="w-2.5 h-2.5 rounded-full bg-green-500/70" />
               </span>
-              <span className="text-xs text-nolan-muted ml-1 tracking-widest">BEHIND THE SCENES</span>
+              <span className="text-xs text-nolan-muted ml-1 tracking-widest">STUDIO CONVERSATION</span>
               {busy && <span className="ml-auto flex items-center gap-1 text-xs text-nolan-accent">
                 <span className="w-1.5 h-1.5 rounded-full bg-nolan-accent animate-pulse" /> LIVE
               </span>}
@@ -464,6 +497,11 @@ function SectionHeader({ icon, label, badge }: { icon: React.ReactNode; label: s
       {badge && <span className="ml-auto text-xs text-nolan-muted bg-nolan-surface px-2 py-0.5 rounded-full">{badge}</span>}
     </div>
   )
+}
+
+function StudioNote({ role, text, color }: { role: string; text: string; color: 'purple' | 'blue' | 'gold' }) {
+  const colors = { purple: 'border-purple-400/30 bg-purple-400/5 text-purple-200', blue: 'border-blue-400/30 bg-blue-400/5 text-blue-200', gold: 'border-yellow-400/30 bg-yellow-400/5 text-yellow-100' }
+  return <div className={`rounded-xl border p-3 ${colors[color]}`}><p className="text-[10px] font-bold uppercase tracking-[0.16em] opacity-70">{role}</p><p className="text-xs mt-1">{text}</p></div>
 }
 
 function DNARow({ label, value, field, locked, onToggle, highlight }:
