@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable, Awaitable
 from openai import AsyncOpenAI
 from schemas import (
-    Session, WorkflowStatus, CreativeDNA, VisionCard,
+    Session, WorkflowStatus, CreativeDNA, VisionCard, StoryCharacter,
     VisionSelection, ProductionScript, ConstitutionReport,
     CreativeLockDiff, ChangeRequest,
 )
@@ -130,6 +130,13 @@ async def run_dna_extraction(session_id: str, transcript: str) -> CreativeDNA:
         fallback_fn=lambda: _fallback_dna_from_transcript(transcript),
         emit_fallback=lambda msg: emit(sid, "muse", "fallback", msg),
     )
+    # Guard the user promise even when a model overlooks an explicit multi-person premise.
+    if ("two strangers" in transcript.lower() or "two people" in transcript.lower()) and len(dna.characters) < 2:
+        dna.characters.append(StoryCharacter(
+            name="Rhea" if dna.protagonist.name != "Rhea" else "Kabir",
+            role="co-protagonist", relationship_to_protagonist="stranger connected by the same event",
+            want="understand why their lives overlap", secret_or_tension="their version of the truth may not match yours",
+        ))
     await emit(sid, "muse", "artifact", dna.model_dump())
     return dna
 
