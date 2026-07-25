@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
+
+body {
+  background-color: #070710;
+  color: #e2e2f0;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Animated gradient orbs */
+.orb {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.15;
+  pointer-events: none;
+  z-index: 0;
+}
+.orb-1 { width: 600px; height: 600px; background: #6c47ff; top: -200px; left: -200px; animation: orb-move-1 20s ease-in-out infinite; }
+.orb-2 { width: 500px; height: 500px; background: #ff4d6d; bottom: -150px; right: -150px; animation: orb-move-2 25s ease-in-out infinite; }
+.orb-3 { width: 400px; height: 400px; background: #00d68f; top: 40%; left: 40%; animation: orb-move-3 18s ease-in-out infinite; }
+
+@keyframes orb-move-1 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(100px, 80px); } }
+@keyframes orb-move-2 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(-80px, -60px); } }
+@keyframes orb-move-3 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(60px, -80px); } }
+
+/* Glass card */
+.glass {
+  background: rgba(14, 14, 28, 0.7);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(108, 71, 255, 0.2);
+}
+.glass-hover:hover {
+  border-color: rgba(108, 71, 255, 0.6);
+  box-shadow: 0 0 20px rgba(108, 71, 255, 0.2);
+  transition: all 0.3s ease;
+}
+
+/* Terminal cursor blink */
+.cursor::after {
+  content: '█';
+  animation: blink 1s step-end infinite;
+}
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: #0e0e1c; }
+::-webkit-scrollbar-thumb { background: #6c47ff44; border-radius: 2px; }
