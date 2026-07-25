@@ -3,7 +3,7 @@ Audio Director Agent — converts a production script to ElevenLabs TTS audio pe
 Handles Indian English accent via eleven_multilingual_v2.
 """
 from __future__ import annotations
-import os, asyncio, tempfile, json
+import os, asyncio, tempfile, json, hashlib
 from pathlib import Path
 from elevenlabs.client import AsyncElevenLabs
 from elevenlabs import VoiceSettings
@@ -20,6 +20,11 @@ VOICE_MAP: dict[str, str] = {
     "KARAN":    os.getenv("VOICE_ID_MALE",     "iP95p4xoKVk53GoZ742B"),
     "BROTHER":  os.getenv("VOICE_ID_MALE",     "iP95p4xoKVk53GoZ742B"),
 }
+STOCK_VOICES = [
+    os.getenv("VOICE_ID_NARRATOR", "pqHfZKP75CvOlQylNhV4"),
+    os.getenv("VOICE_ID_FEMALE", "jBpfuIE2acCO8z3wKNLl"),
+    os.getenv("VOICE_ID_MALE", "iP95p4xoKVk53GoZ742B"),
+]
 MODEL = "eleven_multilingual_v2"
 DEFAULT_SETTINGS = VoiceSettings(stability=0.55, similarity_boost=0.82, style=0.2)
 
@@ -30,18 +35,27 @@ async def synthesise_line(
     voice_note: str | None,
     cameo_voice_id: str | None,
     cameo_character: str | None,
+    emotion: str | None,
 ) -> bytes:
     """Return MP3 bytes for one dialogue line."""
     # Use Voice Cameo if this character is the cameo
     if cameo_voice_id and cameo_character and character.upper() == cameo_character.upper():
         voice_id = cameo_voice_id
     else:
-        voice_id = VOICE_MAP.get(character.upper(), VOICE_MAP["NARRATOR"])
+        # Unknown characters must not all collapse into the narrator voice.
+        voice_id = VOICE_MAP.get(character.upper())
+        if not voice_id:
+            voice_id = STOCK_VOICES[int(hashlib.sha256(character.upper().encode()).hexdigest(), 16) % len(STOCK_VOICES)]
 
     # Adjust settings for voice notes (e.g. [whispering])
     settings = DEFAULT_SETTINGS
-    if voice_note and "whisper" in voice_note.lower():
+    delivery = f"{voice_note or ''} {emotion or ''}".lower()
+    if "whisper" in delivery:
         settings = VoiceSettings(stability=0.75, similarity_boost=0.9, style=0.0)
+    elif any(word in delivery for word in ("afraid", "alarmed", "panic", "urgent", "angry", "defiant")):
+        settings = VoiceSettings(stability=0.32, similarity_boost=0.8, style=0.65)
+    elif any(word in delivery for word in ("sad", "grief", "quiet", "tender", "emotional")):
+        settings = VoiceSettings(stability=0.48, similarity_boost=0.86, style=0.45)
 
     # The ElevenLabs async SDK returns an async generator directly. Awaiting it
     # raises before a single byte is generated.
@@ -88,7 +102,7 @@ async def generate_voice_lines(
                 try:
                     audio_bytes = await synthesise_line(
                         line.character, line.text,
-                        line.voice_note, cameo_voice_id, cameo_character,
+                        line.voice_note, cameo_voice_id, cameo_character, line.emotion,
                     )
                     break
                 except Exception as exc:

@@ -1,93 +1,108 @@
-"""
-Audio Mixer — assembles the final cinematic audio pilot.
-Stitches TTS lines + silence gaps + SFX/ambience stubs.
-Falls back gracefully if ffmpeg / pydub unavailable.
-"""
+"""Audio mixer — turns Nolan's production timeline into a real audio drama mix."""
 from __future__ import annotations
-import os, shutil
+import shutil, subprocess, tempfile
 from pathlib import Path
 import logging
 
 log = logging.getLogger("nolan.mixer")
 
 
-def _pydub_available() -> bool:
+def _configure_ffmpeg() -> bool:
+    """Point pydub at a bundled FFmpeg binary when the system lacks one."""
     try:
-        from pydub import AudioSegment  # noqa: F401
-        return True
-    except ImportError:
+        from pydub import AudioSegment
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            import imageio_ffmpeg
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        AudioSegment.converter = ffmpeg
+        return bool(ffmpeg)
+    except Exception as exc:
+        log.warning("No usable audio decoder: %s", exc)
         return False
 
 
+def _atmosphere(description: str, duration_ms: int, kind: str):
+    """Create modest, original procedural beds/cues — no fake file references."""
+    from pydub import AudioSegment
+    from pydub.generators import Sine, WhiteNoise
+
+    desc = description.lower()
+    duration_ms = max(duration_ms, 350)
+    if kind == "music":
+        # A restrained two-note tension bed; deliberately kept beneath dialogue.
+        low = Sine(110).to_audio_segment(duration=duration_ms).apply_gain(-37)
+        high = Sine(165 if "magic" not in desc else 220).to_audio_segment(duration=duration_ms).apply_gain(-42)
+        return low.overlay(high).fade_in(800).fade_out(1200)
+    if "wand" in desc or "magic" in desc or "spell" in desc:
+        shimmer = Sine(880).to_audio_segment(duration=duration_ms).apply_gain(-21)
+        return shimmer.overlay(Sine(1320).to_audio_segment(duration=duration_ms).apply_gain(-29)).fade_in(60).fade_out(300)
+    if "door" in desc or "crash" in desc or "alarm" in desc:
+        hit = WhiteNoise().to_audio_segment(duration=min(220, duration_ms)).low_pass_filter(700).apply_gain(-18)
+        tail = Sine(95).to_audio_segment(duration=duration_ms).apply_gain(-33).fade_out(duration_ms)
+        return hit.overlay(tail)
+    if "footstep" in desc or "running" in desc:
+        step = WhiteNoise().to_audio_segment(duration=80).low_pass_filter(450).apply_gain(-23)
+        cue = AudioSegment.silent(duration=duration_ms)
+        for offset in range(0, duration_ms, 240): cue = cue.overlay(step, position=offset)
+        return cue
+    # Default ambience: soft filtered noise, enough to create a listening space.
+    return WhiteNoise().to_audio_segment(duration=duration_ms).low_pass_filter(900).apply_gain(-43).fade_in(600).fade_out(900)
+
+
+def _decode_mp3(path: Path):
+    """Decode with bundled ffmpeg without depending on a separate ffprobe."""
+    from pydub import AudioSegment
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp:
+        wav_path = Path(temp.name)
+    try:
+        subprocess.run([AudioSegment.converter, "-y", "-i", str(path), str(wav_path)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return AudioSegment.from_wav(wav_path)
+    finally:
+        wav_path.unlink(missing_ok=True)
+
+
 def mix_timeline(timeline: list[dict], out_path: Path) -> Path:
-    """
-    Mix a timeline of {type, path?, duration?, description?} into one MP3.
-    Returns path to the mixed file.
-    """
-    # pydub can import without ffmpeg, but cannot decode/export MP3 without it.
-    # In that environment we still return an honest, playable ElevenLabs take
-    # rather than advertising a pilot that was never written to disk.
-    if not _pydub_available() or not (shutil.which("ffmpeg") or shutil.which("avconv")):
-        log.warning("audio mixer unavailable — returning first dialogue track as pilot")
-        tracks = [Path(entry["path"]) for entry in timeline if entry.get("path") and Path(entry["path"]).exists()]
-        if tracks:
-            # Consecutive MP3 frame streams are valid in browser decoders. This
-            # keeps every real TTS line in the pilot when ffmpeg is unavailable.
-            out_path.write_bytes(b"".join(track.read_bytes() for track in tracks))
-            return out_path
-        raise RuntimeError("No synthesised dialogue track is available for the pilot")
+    """Mix dialogue, original procedural ambience, music and cue effects to MP3."""
+    if not _configure_ffmpeg():
+        raise RuntimeError("Audio mixer is unavailable")
 
     from pydub import AudioSegment
-
-    combined = AudioSegment.empty()
-    sfx_dir = Path(__file__).parent / "sfx"
+    spoken = AudioSegment.empty()
+    ambience_descriptions: list[str] = []
+    music_descriptions: list[str] = []
 
     for entry in timeline:
-        t = entry.get("type")
+        kind = entry.get("type")
+        if kind == "ambience":
+            ambience_descriptions.append(entry.get("description") or "atmosphere")
+        elif kind == "music":
+            music_descriptions.append(entry.get("description") or "unresolved score")
+        elif kind == "dialogue" and entry.get("path"):
+            path = Path(entry["path"])
+            if path.exists():
+                spoken += _decode_mp3(path) + AudioSegment.silent(duration=int(entry.get("pause_after", .45) * 1000))
+        elif kind == "silence":
+            spoken += AudioSegment.silent(duration=max(250, int(float(entry.get("duration", 1)) * 1000)))
+        elif kind == "sfx":
+            cue = _atmosphere(entry.get("description") or "cue", int(float(entry.get("duration", 1)) * 1000), "sfx")
+            # Effects are an audible beat between lines, not a silent placeholder.
+            spoken += cue + AudioSegment.silent(duration=180)
 
-        if t == "dialogue" and entry.get("path"):
-            p = Path(entry["path"])
-            if p.exists():
-                seg = AudioSegment.from_mp3(str(p))
-                combined += seg
-                # small gap after each line
-                pause = int(entry.get("pause_after", 0.4) * 1000)
-                combined += AudioSegment.silent(duration=pause)
+    if len(spoken) == 0:
+        raise RuntimeError("No spoken audio was available to mix")
 
-        elif t == "silence":
-            ms = int(float(entry.get("duration", 1.0)) * 1000)
-            combined += AudioSegment.silent(duration=max(ms, 100))
-
-        elif t in ("ambience", "sfx", "music"):
-            # Look for a matching local SFX file by keyword
-            desc = (entry.get("description") or "").lower()
-            ms = int(float(entry.get("duration", 2.0)) * 1000)
-            sfx_file = _find_sfx(sfx_dir, desc)
-            if sfx_file:
-                sfx_seg = AudioSegment.from_file(str(sfx_file))[:ms]
-                sfx_seg = sfx_seg - 15  # duck -15dB
-                # Overlay with last N ms of combined (or add as prefix)
-                if len(combined) >= ms:
-                    combined = combined.overlay(sfx_seg, position=len(combined) - ms)
-                else:
-                    combined = sfx_seg.overlay(combined)
-            else:
-                # No SFX file — just add silence placeholder
-                combined += AudioSegment.silent(duration=min(ms, 2000))
-
-    # Normalise and export
-    combined = combined.normalize()
-    combined.export(str(out_path), format="mp3", bitrate="128k")
-    log.info("Mixed audio → %s (%.1fs)", out_path, len(combined) / 1000)
+    # A Pocket-FM-style pilot needs breathing room. Preserve its spoken arc,
+    # then finish with a short atmospheric cliffhanger tail when it is brief.
+    target_ms = max(60_000, len(spoken) + 5_000)
+    bed = _atmosphere(ambience_descriptions[0] if ambience_descriptions else "atmosphere", target_ms, "ambience")
+    if music_descriptions:
+        bed = bed.overlay(_atmosphere(music_descriptions[0], target_ms, "music"))
+    mixed = bed.overlay(spoken, position=0)
+    if len(mixed) < target_ms:
+        mixed += bed[len(mixed):target_ms]
+    mixed = mixed.normalize(headroom=1.5).fade_in(120).fade_out(1200)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    mixed.export(out_path, format="mp3", bitrate="128k")
+    log.info("Mixed real pilot → %s (%.1fs)", out_path, len(mixed) / 1000)
     return out_path
-
-
-def _find_sfx(sfx_dir: Path, description: str) -> Path | None:
-    if not sfx_dir.exists():
-        return None
-    keywords = description.split()
-    for f in sfx_dir.iterdir():
-        name = f.stem.lower()
-        if any(kw in name for kw in keywords):
-            return f
-    return None

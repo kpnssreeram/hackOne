@@ -6,6 +6,7 @@ httpx==0.28.0
 openai==1.57.0
 elevenlabs==1.50.4
 pydub==0.25.1
+imageio-ffmpeg==0.6.0
 pydantic==2.10.3
 pydantic-settings==2.6.1
 python-dotenv==1.0.1
