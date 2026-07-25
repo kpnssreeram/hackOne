@@ -32,6 +32,9 @@ Rules:
 - Be specific. Vague DNA produces vague stories.
 
 Return ONLY valid JSON matching the CreativeDNA schema. No markdown, no explanation.
+
+Return every field in exactly this shape:
+{"core_emotion":"string","audience_promise":"string","protagonist":{"name":"string","desire":"string","fear":"string"},"central_conflict":"string","symbols":["string"],"non_negotiables":["string"],"tone":["string"],"genre":["string"],"story_references":["string"],"characters":[{"name":"string","role":"string","relationship_to_protagonist":"string","want":"string","secret_or_tension":"string"}],"premise":"string","creative_freedom":50,"locked_fields":[]}
 """
 
 
