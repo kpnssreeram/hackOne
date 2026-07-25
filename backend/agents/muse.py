@@ -98,20 +98,36 @@ async def extract_dna(transcript: str, emit_token) -> CreativeDNA:
     await emit_token(f'Analysing: "{transcript[:80]}..."\n\n')
 
     # Stream reasoning first
-    async with client.chat.completions.stream(
+    response = await client.chat.completions.create(
         model="gpt-4o-mini",   # faster, cheaper, handles Indian English well
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f'Input: "{transcript}"\n\nThink briefly about the core emotion, then output the JSON.'},
+            {"role": "user", "content": (
+                f'Input: "{transcript}"\n\n'
+                "Fill EVERY field of this exact JSON structure based on the input. "
+                "Use the input's real people, feelings, and events — do not invent an unrelated plot:\n"
+                '{\n'
+                '  "core_emotion": "the true emotional core, from the input",\n'
+                '  "audience_promise": "what the listener will discover",\n'
+                '  "protagonist": {"name": "a name (invent a fitting one if none given)", "desire": "what they want", "fear": "what they fear"},\n'
+                '  "central_conflict": "the core tension",\n'
+                '  "symbols": ["three", "evocative", "symbols"],\n'
+                '  "non_negotiables": ["facts the user explicitly stated"],\n'
+                '  "tone": ["two", "tone words"],\n'
+                '  "creative_freedom": 65\n'
+                '}\n'
+                "Return ONLY the completed JSON."
+            )},
         ],
         max_tokens=700,
-    ) as stream:
-        full = ""
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content if chunk.choices else None
-            if delta:
-                full += delta
-                await emit_token(delta)
+        stream=True,
+    )
+    full = ""
+    async for chunk in response:
+        delta = chunk.choices[0].delta.content if chunk.choices else None
+        if delta:
+            full += delta
+            await emit_token(delta)
 
     # Parse JSON from response
     raw = full.strip()
@@ -124,8 +140,26 @@ async def extract_dna(transcript: str, emit_token) -> CreativeDNA:
     match = re.search(r'\{.*\}', raw, re.DOTALL)
     if match:
         import json
-        data = json.loads(match.group())
-        return CreativeDNA(**data)
+        try:
+            data = json.loads(match.group())
+        except Exception:
+            log.warning("Muse: JSON decode failed, using dynamic fallback")
+            return _fallback_dna_from_transcript(transcript)
+
+        # Merge model output over a smart fallback so partial/misshaped JSON
+        # still yields a valid DNA that reflects the user's actual words.
+        base = _fallback_dna_from_transcript(transcript).model_dump()
+        prot = data.pop("protagonist", None)
+        for k, v in data.items():
+            if v:
+                base[k] = v
+        if isinstance(prot, dict):
+            base["protagonist"].update({k: v for k, v in prot.items() if v})
+        try:
+            return CreativeDNA(**base)
+        except Exception as exc:
+            log.warning("Muse: merge validation failed (%s), using fallback", exc)
+            return _fallback_dna_from_transcript(transcript)
 
     # If parsing fails, use dynamic fallback
     log.warning("Muse: JSON parse failed, using dynamic fallback")

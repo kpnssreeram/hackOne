@@ -3,6 +3,7 @@ Nolan — FastAPI backend
 All endpoints, SSE streaming, file serving.
 """
 from __future__ import annotations
+import ssl_noverify  # noqa: F401 — must be first: disables SSL verify for corporate proxy
 import asyncio, json, os, uuid, io
 from pathlib import Path
 from contextlib import asynccontextmanager

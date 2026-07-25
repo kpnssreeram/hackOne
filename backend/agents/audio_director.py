@@ -43,13 +43,13 @@ async def synthesise_line(
     if voice_note and "whisper" in voice_note.lower():
         settings = VoiceSettings(stability=0.75, similarity_boost=0.9, style=0.0)
 
-    audio_gen = await el.text_to_speech.convert(
+    audio_gen = el.text_to_speech.convert(
         voice_id=voice_id,
         text=text,
         model_id=MODEL,
         voice_settings=settings,
     )
-    # elevenlabs SDK returns a generator; collect bytes
+    # elevenlabs async SDK returns an async generator (do NOT await it); collect bytes
     chunks = []
     async for chunk in audio_gen:
         chunks.append(chunk)
@@ -75,22 +75,33 @@ async def generate_voice_lines(
         if line.type == "dialogue" and line.text and line.character:
             tasks.append((i, line))
 
-    # Run TTS in parallel (max 4 concurrent to avoid rate limits)
-    sem = asyncio.Semaphore(4)
+    # Run TTS with limited concurrency (ElevenLabs starter = 2 concurrent max)
+    sem = asyncio.Semaphore(2)
 
     async def synthesise_with_sem(idx: int, line: ProductionLine):
         async with sem:
             await emit_token(f"  ► {line.character}: {line.text[:50]}...\n")
-            audio_bytes = await synthesise_line(
-                line.character, line.text,
-                line.voice_note, cameo_voice_id, cameo_character,
-            )
-            path = out_dir / f"line_{idx:03d}_{line.character}.mp3"
-            path.write_bytes(audio_bytes)
-            return idx, str(path)
+            for attempt in range(4):
+                try:
+                    audio_bytes = await synthesise_line(
+                        line.character, line.text,
+                        line.voice_note, cameo_voice_id, cameo_character,
+                    )
+                    path = out_dir / f"line_{idx:03d}_{line.character}.mp3"
+                    path.write_bytes(audio_bytes)
+                    return idx, str(path)
+                except Exception as e:
+                    msg = str(e).lower()
+                    if "429" in msg or "concurrent" in msg or "too many" in msg:
+                        await asyncio.sleep(1.5 * (attempt + 1))  # backoff + retry
+                        continue
+                    log.warning("TTS failed for line %d (%s) — skipping", idx, e)
+                    return idx, None
+            log.warning("TTS gave up on line %d after retries", idx)
+            return idx, None
 
     results = await asyncio.gather(*[synthesise_with_sem(i, l) for i, l in tasks])
-    path_map = dict(results)
+    path_map = {i: p for i, p in results if p}
 
     for i, line in enumerate(script.lines):
         entry: dict = {"type": line.type, "index": i}

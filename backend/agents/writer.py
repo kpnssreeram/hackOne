@@ -158,8 +158,19 @@ async def generate_script(
                 f"Primary vision: {primary.title if primary else 'emotional_intimacy'}\n"
                 f"Opening from: {selection.opening_from}\n"
                 f"Custom note: {selection.custom_note or 'none'}\n\n"
-                "Write a ProductionScript JSON. 60-90 seconds. Audio-native. "
-                "Use protagonist name and their specific situation. Return ONLY JSON."
+                "Write a ProductionScript as JSON with EXACTLY these keys:\n"
+                '{\n'
+                '  "title": "episode title",\n'
+                '  "estimated_duration_seconds": 75,\n'
+                '  "lines": [\n'
+                '    {"type": "ambience", "description": "...", "duration_seconds": 2.0},\n'
+                '    {"type": "silence", "duration_seconds": 1.0},\n'
+                '    {"type": "dialogue", "character": "NAME", "text": "...", "emotion": "..."},\n'
+                '    {"type": "sfx", "description": "...", "duration_seconds": 0.5}\n'
+                '  ]\n'
+                '}\n'
+                "60-90 seconds, audio-native, use the protagonist's real name and situation. "
+                "Return ONLY the JSON."
             )},
         ],
         temperature=0.8,
@@ -181,8 +192,17 @@ async def generate_script(
 
     match = re.search(r'\{.*\}', raw, re.DOTALL)
     if match:
-        data = json.loads(match.group())
-        return ProductionScript(**data)
+        try:
+            data = json.loads(match.group())
+            # Fill required fields the model sometimes omits
+            data.setdefault("title", f"{dna.protagonist.name}'s Story — Pilot")
+            dur = (data.get("estimated_duration_seconds")
+                   or data.get("duration_seconds") or data.get("duration") or 75)
+            data["estimated_duration_seconds"] = int(dur)
+            if data.get("lines"):
+                return ProductionScript(**data)
+        except Exception as exc:
+            log.warning("Writer: script parse/validation failed (%s) — fallback", exc)
 
     log.warning("Writer: script JSON parse failed — minimal fallback")
     # Minimal dynamic fallback script

@@ -72,6 +72,13 @@ export default function SessionPage() {
 
   const audioRef = useRef<HTMLAudioElement>(null)
   const termRef  = useRef<HTMLDivElement>(null)
+  const inFlight = useRef(false)   // synchronous guard against double-clicks
+
+  // Release the double-click guard and clear the busy state together
+  const setIdle = useCallback(() => {
+    inFlight.current = false
+    setBusy(false)
+  }, [])
 
   // Auto-scroll terminal
   useEffect(() => {
@@ -97,7 +104,7 @@ export default function SessionPage() {
 
     if (e.type === 'status')   pushLine(e.agent, String(e.data), 'status')
     if (e.type === 'fallback') pushLine(e.agent, `⚡ ${e.data}`, 'fallback')
-    if (e.type === 'error')    pushLine(e.agent, `✗ ${e.data}`, 'error')
+    if (e.type === 'error')  { pushLine(e.agent, `✗ ${e.data}`, 'error'); setIdle() }
 
     if (e.type === 'violation') {
       const c = e.data as Check
@@ -107,7 +114,7 @@ export default function SessionPage() {
     if (e.type === 'artifact') {
       const d = e.data
       // DNA arrived
-      if (d?.core_emotion) { setDna(d); setStep('visions'); setBusy(false) }
+      if (d?.core_emotion) { setDna(d); setStep('visions'); setIdle() }
       // Constitution score
       if (d?.score !== undefined) setScore(d.score)
       // Creative lock diff
@@ -119,15 +126,19 @@ export default function SessionPage() {
 
     if (e.type === 'complete') {
       const d = typeof e.data === 'object' ? e.data : {}
-      if (d.visions_count) setStep('production')
+      if (d.visions_count) {
+        // Load the generated visions so the selectable cards render
+        api.getSession(sessionId).then(s => { if (s.visions?.length) setVisions(s.visions) })
+        setStep('visions')
+      }
       if (d.status === 'READY' || d.audio_url) {
         setAudioUrl(api.audioUrl(sessionId))
         setStep('audio')
       }
-      setBusy(false)
+      setIdle()
       setSseUrl(null)
     }
-  }, [sessionId, pushLine])
+  }, [sessionId, pushLine, setIdle])
 
   useSSE(sseUrl, handleSSE)
 
@@ -135,32 +146,40 @@ export default function SessionPage() {
   useEffect(() => {
     if (!transcript || !sessionId) return
     ;(async () => {
+      if (inFlight.current) return
+      inFlight.current = true
       setBusy(true)
       setSseUrl(api.eventsUrl(sessionId))
       pushLine('muse', `Analysing: "${transcript.slice(0, 70)}..."`)
-      const result = await api.extractDNA(sessionId, transcript)
-      if (result?.core_emotion) { setDna(result); setStep('visions'); setBusy(false) }
+      try {
+        const result = await api.extractDNA(sessionId, transcript)
+        if (result?.core_emotion) { setDna(result); setStep('visions') }
+      } finally { setIdle() }
     })()
   }, [transcript, sessionId])
 
   // ─── Actions ──────────────────────────────────────────────────────────────────
   async function doGenerateVisions() {
-    if (!dna) return
+    if (!dna || inFlight.current) return
+    inFlight.current = true
     setBusy(true)
     setStep('visions')
     setSseUrl(api.eventsUrl(sessionId))
     pushLine('writer', 'Auditioning 3 directorial visions...')
-    const res = await api.generateVisions(sessionId)
-    // Visions arrive via SSE artifacts
-    // Poll session as fallback
-    setTimeout(async () => {
+    await api.generateVisions(sessionId)
+    // Visions arrive via SSE 'complete'; poll as a backup (generation ~8-12s)
+    let tries = 0
+    const poll = setInterval(async () => {
+      tries++
       const s = await api.getSession(sessionId)
-      if (s.visions?.length) { setVisions(s.visions); setBusy(false) }
-    }, 3000)
+      if (s.visions?.length) { setVisions(s.visions); setIdle(); clearInterval(poll) }
+      else if (tries >= 10) { setIdle(); clearInterval(poll) }
+    }, 2000)
   }
 
   async function doProduce() {
-    if (!selectedVision) return
+    if (!selectedVision || inFlight.current) return
+    inFlight.current = true
     setBusy(true)
     setStep('production')
     setSseUrl(api.eventsUrl(sessionId))
@@ -174,7 +193,8 @@ export default function SessionPage() {
   }
 
   async function doRevise() {
-    if (!revise.trim()) return
+    if (!revise.trim() || inFlight.current) return
+    inFlight.current = true
     setBusy(true)
     setLockDiff(null)
     setSseUrl(api.eventsUrl(sessionId))

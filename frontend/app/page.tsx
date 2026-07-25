@@ -21,6 +21,7 @@ export default function Home() {
   const [textInput, setTextInput] = useState('')
   const mediaRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  const loadingRef = useRef(false)   // synchronous double-click guard
 
   async function startRecording() {
     try {
@@ -53,6 +54,8 @@ export default function Home() {
   async function launch(audioBlob?: Blob) {
     const text = textInput.trim()
     if (!audioBlob && !text) return
+    if (loadingRef.current) return   // guard against accidental double-clicks
+    loadingRef.current = true
 
     setLoading(true)
     setStatus('Creating your studio session...')
@@ -75,6 +78,7 @@ export default function Home() {
       console.error(err)
       setStatus('Something went wrong. Please try again.')
       setLoading(false)
+      loadingRef.current = false
     }
   }
 

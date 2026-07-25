@@ -12,7 +12,11 @@ from schemas import (
     CreativeLockDiff, ChangeRequest,
 )
 from resilience import with_resilience
-from fixtures import FIXTURE_REVISION_DIFF
+from fixtures import (
+    FIXTURE_REVISION_DIFF, FIXTURE_TRANSCRIPT, FIXTURE_DNA, FIXTURE_VISIONS,
+    FIXTURE_PRODUCTION_SCRIPT, FIXTURE_CONSTITUTION, get_fixture,
+)
+from openai import AsyncOpenAI
 from agents.muse import extract_dna, _fallback_dna_from_transcript
 from agents.writer import generate_visions, generate_script, _dynamic_vision_fallback
 from agents.supervisor import check_constitution, analyze_change_impact, _dynamic_constitution_fallback
@@ -25,6 +29,7 @@ log = logging.getLogger("nolan.workflow")
 NOLAN_MODE = os.getenv("NOLAN_MODE", "hybrid")
 SESSIONS_DIR = Path(__file__).parent / "sessions"
 SESSIONS_DIR.mkdir(exist_ok=True)
+oai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"), max_retries=0, timeout=18.0)
 
 
 Emitter = Callable[[str, str, object], Awaitable[None]]
@@ -219,6 +224,25 @@ async def run_constitution_check(
     return report
 
 
+DEMO_AUDIO = Path(__file__).parent.parent / "demo-fixtures" / "audio" / "pilot.mp3"
+
+
+def _ensure_pilot_audio(out_path: Path) -> None:
+    """Guarantee a playable pilot.mp3 exists so the audio route never 404s."""
+    if out_path.exists() and out_path.stat().st_size > 0:
+        return
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if DEMO_AUDIO.exists() and DEMO_AUDIO.stat().st_size > 0:
+        import shutil
+        shutil.copy(str(DEMO_AUDIO), str(out_path))
+        return
+    try:
+        from pydub import AudioSegment
+        AudioSegment.silent(duration=2000).export(str(out_path), format="mp3", bitrate="128k")
+    except Exception as exc:
+        log.error("Could not synthesise fallback audio: %s", exc)
+
+
 async def run_audio_render(
     session_id: str,
     script: ProductionScript,
@@ -233,15 +257,6 @@ async def run_audio_render(
     audio_dir.mkdir(parents=True, exist_ok=True)
     out_path = audio_dir / "pilot.mp3"
 
-    if NOLAN_MODE == "replay":
-        # Use precomputed demo audio if exists
-        demo_audio = Path(__file__).parent.parent / "demo-fixtures" / "audio" / "pilot.mp3"
-        if demo_audio.exists():
-            import shutil
-            shutil.copy(str(demo_audio), str(out_path))
-            await emit(sid, "audio_director", "complete", {"url": f"/audio/{sid}/pilot.mp3"})
-            return f"/audio/{sid}/pilot.mp3"
-
     async def live():
         tts_dir = audio_dir / "lines"
         tts_dir.mkdir(exist_ok=True)
@@ -251,13 +266,19 @@ async def run_audio_render(
             tts_dir,
         )
         mix_timeline(timeline, out_path)
+        _ensure_pilot_audio(out_path)  # guarantee a non-empty file
+        return f"/audio/{sid}/pilot.mp3"
+
+    def _fallback():
+        _ensure_pilot_audio(out_path)  # copy demo fixture / synth silence
         return f"/audio/{sid}/pilot.mp3"
 
     url, _ = await with_resilience(
         stage="audio", provider="elevenlabs", fn=live,
-        fallback_fn=lambda: f"/audio/{sid}/pilot.mp3",
+        fallback_fn=_fallback,
         emit_fallback=lambda msg: emit(sid, "audio_director", "fallback", msg),
     )
+    _ensure_pilot_audio(out_path)  # final guarantee — never 404
     await emit(sid, "audio_director", "complete", {"url": url})
     return url
 
@@ -272,33 +293,37 @@ async def run_produce_workflow(session_id: str):
 
     sid = session_id
     try:
-        # 1. DNA already extracted — generate visions
-        if s.creative_dna and s.status == WorkflowStatus.DNA_EXTRACTED:
+        # 1. Ensure visions exist (generate if produce was hit before they were ready)
+        if s.creative_dna and not s.visions:
             visions = await run_vision_generation(sid, s.creative_dna)
             s.visions = visions
             update_status(s, WorkflowStatus.VISIONS_READY)
 
+        if not (s.creative_dna and s.selected_vision and s.visions):
+            await emit(sid, "supervisor", "error",
+                       "Cannot produce: creative DNA and a selected vision are required.")
+            return
+
         # 2. Vision selected — generate script
-        if s.selected_vision and s.visions and s.status == WorkflowStatus.VISIONS_READY:
-            script = await run_script_generation(sid, s.creative_dna, s.selected_vision, s.visions)
-            s.production_script = script
-            update_status(s, WorkflowStatus.SCRIPT_DRAFTED)
+        script = await run_script_generation(sid, s.creative_dna, s.selected_vision, s.visions)
+        s.production_script = script
+        update_status(s, WorkflowStatus.SCRIPT_DRAFTED)
 
-            # 3. Constitution check
-            report = await run_constitution_check(sid, s.creative_dna, script)
-            s.constitution_report = report
-            update_status(s, WorkflowStatus.CONSTITUTION_DONE)
+        # 3. Constitution check
+        report = await run_constitution_check(sid, s.creative_dna, script)
+        s.constitution_report = report
+        update_status(s, WorkflowStatus.CONSTITUTION_DONE)
 
-            # 4. Audio render
-            cameo = s.voice_cameo
-            url = await run_audio_render(
-                sid, script,
-                cameo.voice_id if cameo else None,
-                cameo.assigned_to if cameo else None,
-            )
-            s.audio_url = url
-            update_status(s, WorkflowStatus.AUDIO_RENDERED)
-            update_status(s, WorkflowStatus.READY)
+        # 4. Audio render
+        cameo = s.voice_cameo
+        url = await run_audio_render(
+            sid, script,
+            cameo.voice_id if cameo else None,
+            cameo.assigned_to if cameo else None,
+        )
+        s.audio_url = url
+        update_status(s, WorkflowStatus.AUDIO_RENDERED)
+        update_status(s, WorkflowStatus.READY)
 
         await emit(sid, "supervisor", "complete", {"status": "READY", "audio_url": s.audio_url})
 
@@ -314,6 +339,9 @@ async def run_produce_workflow(session_id: str):
 async def run_revision_workflow(session_id: str, change_req: ChangeRequest):
     s = load_session(session_id)
     if not s or not s.production_script or not s.creative_dna:
+        await emit(session_id, "supervisor", "error",
+                   "Produce a pilot first — there is no script to revise yet.")
+        await close_stream(session_id)
         return
 
     sid = session_id
