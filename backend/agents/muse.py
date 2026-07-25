@@ -123,21 +123,23 @@ async def extract_dna(transcript: str, emit_token) -> CreativeDNA:
     log.info("Muse: extracting DNA (%d chars)", len(transcript))
     await emit_token(f'Analysing: "{transcript[:80]}..."\n\n')
 
-    # Stream reasoning first
-    async with client.chat.completions.stream(
+    # Stream a compact extraction response. The SDK's supported streaming surface
+    # is `create(..., stream=True)`, not the synchronous helper API.
+    response = await client.chat.completions.create(
         model="gpt-4o-mini",   # faster, cheaper, handles Indian English well
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f'Input: "{transcript}"\n\nThink briefly about the core emotion, then output the JSON.'},
         ],
         max_tokens=700,
-    ) as stream:
-        full = ""
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content if chunk.choices else None
-            if delta:
-                full += delta
-                await emit_token(delta)
+        stream=True,
+    )
+    full = ""
+    async for chunk in response:
+        delta = chunk.choices[0].delta.content if chunk.choices else None
+        if delta:
+            full += delta
+            await emit_token(delta)
 
     # Parse JSON from response
     raw = full.strip()

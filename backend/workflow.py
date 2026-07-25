@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio, json, os, uuid
 from pathlib import Path
 from typing import Callable, Awaitable
+from openai import AsyncOpenAI
 from schemas import (
     Session, WorkflowStatus, CreativeDNA, VisionCard,
     VisionSelection, ProductionScript, ConstitutionReport,
@@ -22,6 +23,7 @@ from audio_mixer import mix_timeline
 import logging
 
 log = logging.getLogger("nolan.workflow")
+oai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", "replay-placeholder"), max_retries=0, timeout=30.0)
 NOLAN_MODE = os.getenv("NOLAN_MODE", "hybrid")
 SESSIONS_DIR = Path(__file__).parent / "sessions"
 SESSIONS_DIR.mkdir(exist_ok=True)
@@ -94,7 +96,7 @@ async def run_transcription(session_id: str, audio_bytes: bytes) -> str:
 
     text, degraded = await with_resilience(
         stage="transcribe", provider="openai", fn=live,
-        fallback_fn=lambda: get_fixture("transcribe")["transcript"],
+        fallback_fn=lambda: "I couldn't transcribe this recording. Please type or correct your story here.",
         emit_fallback=lambda msg: emit(sid, "muse", "fallback", msg),
     )
     if degraded:
