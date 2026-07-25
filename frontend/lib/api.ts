@@ -56,6 +56,19 @@ export const api = {
   async deleteCameo(sessionId: string) {
     await fetch(`${API}/api/sessions/${sessionId}/voice-cameo`, { method: 'DELETE' })
   },
+  async uploadVisualAsset(sessionId: string, assetName: 'portrait' | 'live_video', file: File) {
+    const fd = new FormData()
+    fd.append('asset', file)
+    fd.append('consent', 'true')
+    const r = await fetch(`${API}/api/sessions/${sessionId}/visual-assets/${assetName}`, { method: 'POST', body: fd })
+    if (!r.ok) throw new Error(await r.text())
+    return r.json()
+  },
+  async planVisualEpisode(sessionId: string, portraitConsent: boolean, liveVideoConsent: boolean) {
+    const r = await fetch(`${API}/api/sessions/${sessionId}/visual-episode/plan?portrait_consent=${portraitConsent}&live_video_consent=${liveVideoConsent}`, { method: 'POST' })
+    if (!r.ok) throw new Error(await r.text())
+    return r.json()
+  },
   audioUrl(sessionId: string, file = 'pilot.mp3') {
     return `${API}/audio/${sessionId}/${file}`
   },

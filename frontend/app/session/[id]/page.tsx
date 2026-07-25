@@ -7,7 +7,7 @@ import { api } from '@/lib/api'
 import {
   Mic, Lock, Unlock, Play, Pause, CheckCircle, XCircle,
   Sparkles, Radio, Loader2, Volume2, GitBranch, Shield,
-  Wand2, ChevronRight, ChevronDown, ArrowRight, RefreshCw, Zap,
+  Wand2, ChevronRight, ChevronDown, ArrowRight, RefreshCw, Zap, Film, Upload,
 } from 'lucide-react'
 
 // ─── Step definition ──────────────────────────────────────────────────────────
@@ -69,6 +69,9 @@ export default function SessionPage() {
 
   const [revise, setRevise] = useState('')
   const [lockDiff, setLockDiff] = useState<any>(null)
+  const [portraitFile, setPortraitFile] = useState<File | null>(null)
+  const [liveVideoFile, setLiveVideoFile] = useState<File | null>(null)
+  const [visualPlan, setVisualPlan] = useState<any>(null)
 
   const audioRef = useRef<HTMLAudioElement>(null)
   const termRef  = useRef<HTMLDivElement>(null)
@@ -181,6 +184,15 @@ export default function SessionPage() {
     pushLine('supervisor', `Locking: "${revise.slice(0, 60)}"`)
     await api.revise(sessionId, revise, Array.from(lockedFields))
     setRevise('')
+  }
+
+  async function doPlanVisualEpisode() {
+    setBusy(true)
+    try {
+      if (portraitFile) await api.uploadVisualAsset(sessionId, 'portrait', portraitFile)
+      if (liveVideoFile) await api.uploadVisualAsset(sessionId, 'live_video', liveVideoFile)
+      setVisualPlan(await api.planVisualEpisode(sessionId, Boolean(portraitFile), Boolean(liveVideoFile)))
+    } finally { setBusy(false) }
   }
 
   function toggleLock(field: string) {
@@ -313,6 +325,14 @@ export default function SessionPage() {
                   {playing ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
                   {playing ? 'Pause' : 'Play Pilot'}
                 </button>
+              </div>
+              <div className="glass rounded-xl p-4 mt-3 border border-pink-400/25">
+                <div className="flex items-center gap-2 mb-2"><Film className="w-4 h-4 text-pink-300" /><span className="text-xs font-bold tracking-wider text-pink-200">VISUAL EPISODE</span></div>
+                <p className="text-[11px] text-nolan-muted mb-3">Plan a 90-second vertical edit with your optional portrait and auditorium clip.</p>
+                <input className="block w-full text-[10px] mb-2" type="file" accept="image/*" onChange={e => setPortraitFile(e.target.files?.[0] || null)} />
+                <input className="block w-full text-[10px] mb-3" type="file" accept="video/*" onChange={e => setLiveVideoFile(e.target.files?.[0] || null)} />
+                <button onClick={doPlanVisualEpisode} disabled={busy} className="w-full py-2 rounded-lg border border-pink-300/50 text-pink-200 text-xs flex justify-center gap-2"><Upload className="w-3 h-3" />Plan Visual Episode</button>
+                {visualPlan && <p className="text-[10px] text-pink-200 mt-2">✓ {visualPlan.beats?.length} visual beats planned for {visualPlan.target_duration_seconds}s</p>}
               </div>
               {/* Stats */}
               <div className="grid grid-cols-2 gap-3 mt-3">

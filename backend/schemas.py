@@ -181,6 +181,36 @@ class VoiceCameoResult(BaseModel):
     preview_text: str
 
 
+# ─── Visual Episode ──────────────────────────────────────────────────────────
+
+class VisualBeat(BaseModel):
+    id: str
+    start_seconds: int = Field(ge=0)
+    duration_seconds: int = Field(gt=0, le=20)
+    kind: Literal["user_video", "portrait_card", "generated_scene", "title_card"]
+    purpose: str
+    visual_prompt: str
+    narration_anchor: str
+    source_asset: Optional[str] = None
+
+
+class VisualEpisodePlan(BaseModel):
+    title: str
+    aspect_ratio: Literal["9:16"] = "9:16"
+    target_duration_seconds: int = Field(default=90, ge=30, le=90)
+    style: str
+    protagonist_description: str
+    beats: list[VisualBeat]
+    portrait_consent: bool = False
+    live_video_consent: bool = False
+
+
+class VisualEpisodeResult(BaseModel):
+    status: Literal["planned", "rendering", "ready", "failed"] = "planned"
+    url: Optional[str] = None
+    message: Optional[str] = None
+
+
 # ─── Session ─────────────────────────────────────────────────────────────────
 
 class Session(BaseModel):
@@ -196,6 +226,8 @@ class Session(BaseModel):
     constitution_report: Optional[ConstitutionReport] = None
     creative_lock_diff: Optional[CreativeLockDiff] = None
     audio_url: Optional[str] = None
+    visual_episode_plan: Optional[VisualEpisodePlan] = None
+    visual_episode: Optional[VisualEpisodeResult] = None
     voice_cameo: Optional[VoiceCameoResult] = None
     is_degraded: bool = False
     degraded_stages: list[str] = []

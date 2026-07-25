@@ -7,7 +7,7 @@ import asyncio, json, os, uuid, io
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,9 +25,11 @@ from workflow import (
     load_session, save_session, update_status, get_queue,
     run_transcription, run_dna_extraction,
     run_produce_workflow, run_revision_workflow,
-    SESSIONS_DIR,
+    SESSIONS_DIR, emit,
 )
 from agents.voice_cameo import clone_voice, preview_cameo, delete_cameo
+from agents.visual_director import plan_visual_episode
+from schemas import VisualEpisodeResult
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -36,6 +38,7 @@ log = logging.getLogger("nolan.main")
 NOLAN_MODE = os.getenv("NOLAN_MODE", "hybrid")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 AUDIO_DIR = SESSIONS_DIR
+VISUAL_ASSET_NAMES = {"portrait", "live_video"}
 
 
 @asynccontextmanager
@@ -244,6 +247,60 @@ async def delete_voice_cameo(session_id: str):
     s.voice_cameo = None
     save_session(s)
     return {"status": "deleted"}
+
+
+# ─── Visual Episode ──────────────────────────────────────────────────────────
+
+@app.post("/api/sessions/{session_id}/visual-assets/{asset_name}")
+async def upload_visual_asset(
+    session_id: str,
+    asset_name: str,
+    asset: UploadFile = File(...),
+    consent: bool = Form(False),
+):
+    """Store creator-owned source media. Portraits are never sent to Sora."""
+    if asset_name not in VISUAL_ASSET_NAMES:
+        raise HTTPException(400, "asset_name must be portrait or live_video")
+    if not consent:
+        raise HTTPException(400, "Explicit consent is required for uploaded visual media")
+    s = load_session(session_id)
+    if not s:
+        raise HTTPException(404, "Session not found")
+    if asset_name == "portrait" and not (asset.content_type or "").startswith("image/"):
+        raise HTTPException(400, "Portrait must be an image")
+    if asset_name == "live_video" and not (asset.content_type or "").startswith("video/"):
+        raise HTTPException(400, "Live footage must be a video")
+
+    suffix = Path(asset.filename or "").suffix.lower() or (".jpg" if asset_name == "portrait" else ".mp4")
+    destination = SESSIONS_DIR / session_id / "visual" / f"{asset_name}{suffix}"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(await asset.read())
+    return {"asset": asset_name, "stored": True, "filename": destination.name}
+
+
+@app.post("/api/sessions/{session_id}/visual-episode/plan")
+async def create_visual_plan(session_id: str, portrait_consent: bool = False, live_video_consent: bool = False):
+    s = load_session(session_id)
+    if not s or not s.creative_dna or not s.production_script:
+        raise HTTPException(400, "Generate the approved production script before planning visuals")
+    plan = await plan_visual_episode(s.creative_dna, s.production_script)
+    plan.portrait_consent = portrait_consent
+    plan.live_video_consent = live_video_consent
+    s.visual_episode_plan = plan
+    s.visual_episode = VisualEpisodeResult(status="planned", message="Visual episode is planned. Generated scenes use fictional characters; creator media remains local to the final edit.")
+    save_session(s)
+    await emit(session_id, "visual_director", "artifact", {"visual_episode_plan": plan.model_dump()})
+    return plan.model_dump()
+
+
+@app.get("/media/{session_id}/{filename}")
+async def serve_media(session_id: str, filename: str):
+    if Path(filename).name != filename:
+        raise HTTPException(400, "Invalid filename")
+    path = SESSIONS_DIR / session_id / "visual" / filename
+    if not path.exists():
+        raise HTTPException(404, "Media not found")
+    return FileResponse(str(path))
 
 
 # ─── Audio file serving ───────────────────────────────────────────────────────
