@@ -77,16 +77,25 @@ async def generate_voice_lines(
         if line.type == "dialogue" and line.text and line.character:
             tasks.append((i, line))
 
-    # Run TTS in parallel (max 4 concurrent to avoid rate limits)
-    sem = asyncio.Semaphore(4)
+    # The hackathon ElevenLabs plan allows only two concurrent generations.
+    # One-at-a-time is a little slower but keeps the cinematic payoff reliable.
+    sem = asyncio.Semaphore(1)
 
     async def synthesise_with_sem(idx: int, line: ProductionLine):
         async with sem:
             await emit_token(f"  ► {line.character}: {line.text[:50]}...\n")
-            audio_bytes = await synthesise_line(
-                line.character, line.text,
-                line.voice_note, cameo_voice_id, cameo_character,
-            )
+            for attempt in range(3):
+                try:
+                    audio_bytes = await synthesise_line(
+                        line.character, line.text,
+                        line.voice_note, cameo_voice_id, cameo_character,
+                    )
+                    break
+                except Exception as exc:
+                    if attempt == 2 or ("429" not in str(exc) and "concurrent_limit" not in str(exc)):
+                        raise
+                    await emit_token("    waiting briefly for the voice studio...\n")
+                    await asyncio.sleep(attempt + 1)
             path = out_dir / f"line_{idx:03d}_{line.character}.mp3"
             path.write_bytes(audio_bytes)
             return idx, str(path)
