@@ -16,13 +16,11 @@ el = AsyncElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
 
 VOICE_MAP: dict[str, str] = {
     "NARRATOR": os.getenv("VOICE_ID_NARRATOR", "pqHfZKP75CvOlQylNhV4"),
-    "MAYA":     os.getenv("VOICE_ID_FEMALE",   "jBpfuIE2acCO8z3wKNLl"),
     "KARAN":    os.getenv("VOICE_ID_MALE",     "iP95p4xoKVk53GoZ742B"),
     "BROTHER":  os.getenv("VOICE_ID_MALE",     "iP95p4xoKVk53GoZ742B"),
 }
 STOCK_VOICES = [
     os.getenv("VOICE_ID_NARRATOR", "pqHfZKP75CvOlQylNhV4"),
-    os.getenv("VOICE_ID_FEMALE", "jBpfuIE2acCO8z3wKNLl"),
     os.getenv("VOICE_ID_MALE", "iP95p4xoKVk53GoZ742B"),
 ]
 MODEL = "eleven_multilingual_v2"
@@ -59,17 +57,24 @@ async def synthesise_line(
 
     # The ElevenLabs async SDK returns an async generator directly. Awaiting it
     # raises before a single byte is generated.
-    audio_gen = el.text_to_speech.convert(
-        voice_id=voice_id,
-        text=text,
-        model_id=MODEL,
-        voice_settings=settings,
-    )
-    # elevenlabs SDK returns a generator; collect bytes
-    chunks = []
-    async for chunk in audio_gen:
-        chunks.append(chunk)
-    return b"".join(chunks)
+    async def collect(selected_voice: str) -> bytes:
+        audio_gen = el.text_to_speech.convert(
+            voice_id=selected_voice, text=text, model_id=MODEL, voice_settings=settings,
+        )
+        chunks = []
+        async for chunk in audio_gen:
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    try:
+        return await collect(voice_id)
+    except Exception as exc:
+        # Some ElevenLabs library voices require a higher plan. Keep the
+        # episode playable with the verified narrator voice rather than fail.
+        if "paid_plan_required" in str(exc) and voice_id != VOICE_MAP["NARRATOR"]:
+            log.warning("Voice %s unavailable on this plan; using narrator fallback", voice_id)
+            return await collect(VOICE_MAP["NARRATOR"])
+        raise
 
 
 async def generate_voice_lines(
