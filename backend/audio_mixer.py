@@ -29,10 +29,12 @@ def mix_timeline(timeline: list[dict], out_path: Path) -> Path:
     # rather than advertising a pilot that was never written to disk.
     if not _pydub_available() or not (shutil.which("ffmpeg") or shutil.which("avconv")):
         log.warning("audio mixer unavailable — returning first dialogue track as pilot")
-        for entry in timeline:
-            if entry.get("path") and Path(entry["path"]).exists():
-                shutil.copy(entry["path"], out_path)
-                return out_path
+        tracks = [Path(entry["path"]) for entry in timeline if entry.get("path") and Path(entry["path"]).exists()]
+        if tracks:
+            # Consecutive MP3 frame streams are valid in browser decoders. This
+            # keeps every real TTS line in the pilot when ffmpeg is unavailable.
+            out_path.write_bytes(b"".join(track.read_bytes() for track in tracks))
+            return out_path
         raise RuntimeError("No synthesised dialogue track is available for the pilot")
 
     from pydub import AudioSegment
