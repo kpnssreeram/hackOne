@@ -1,0 +1,25 @@
+command:
+  - python
+  - app.py
+
+env:
+  - name: OPENAI_API_KEY
+    value: "SET_IN_RAILWAY"
+  - name: ELEVENLABS_API_KEY
+    value: "SET_IN_RAILWAY"
+  - name: NOLAN_MODE
+    value: "hybrid"
+  - name: NOLAN_SESSIONS_DIR
+    value: "/tmp/nolan-sessions"
+  - name: FRONTEND_URL
+    value: ""
+  - name: ELEVENLABS_TTS_MODEL
+    value: "eleven_multilingual_v2"
+  - name: ELEVENLABS_EXPRESSIVE_TTS_MODEL
+    value: "eleven_v3"
+  - name: VOICE_ID_NARRATOR
+    value: "SAz9YHcvj6GT2YYXdXww"
+  - name: VOICE_ID_FEMALE
+    value: "pFZP5JQG7iQjIQuC4Bku"
+  - name: VOICE_ID_MALE
+    value: "iP95p4xoKVk53GoZ742B"

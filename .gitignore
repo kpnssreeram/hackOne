@@ -17,7 +17,6 @@ build/
 # Node
 node_modules/
 .next/
-out/
 *.tsbuildinfo
 
 # Sessions & audio (runtime)
@@ -34,3 +33,4 @@ Thumbs.db
 
 # Logs
 *.log
+frontend/out/

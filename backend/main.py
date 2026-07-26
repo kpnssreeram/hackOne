@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
@@ -1186,3 +1186,50 @@ async def get_artifacts(session_id: str):
     if not s:
         raise HTTPException(404)
     return s.model_dump()
+
+
+# ─── Static Next.js frontend (Databricks Apps all-in-one) ────────────────────
+# The frontend is pre-built (`next build` with output:'export') into
+# frontend/out/.  FastAPI serves those static files so the whole app runs
+# from a single Databricks App with one URL.
+
+FRONTEND_OUT = Path(__file__).parent.parent / "frontend" / "out"
+
+if FRONTEND_OUT.exists():
+    log.info("Serving Next.js static files from %s", FRONTEND_OUT)
+
+    # Next.js static asset chunks (/_next/static/…)
+    _next_dir = FRONTEND_OUT / "_next"
+    if _next_dir.exists():
+        app.mount("/_next", StaticFiles(directory=str(_next_dir)), name="nextjs_assets")
+
+    # Session page SPA fallback: any /session/<id> serves the pre-built shell.
+    # The actual session ID is read from window.location at runtime by React.
+    @app.get("/session/{session_path:path}", response_class=HTMLResponse, include_in_schema=False)
+    async def serve_session_page(session_path: str):
+        html = FRONTEND_OUT / "session" / "placeholder" / "index.html"
+        if not html.exists():
+            html = FRONTEND_OUT / "index.html"
+        if html.exists():
+            return HTMLResponse(content=html.read_text(encoding="utf-8"))
+        raise HTTPException(503, "Frontend not built")
+
+    # Home page
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    async def serve_root():
+        html = FRONTEND_OUT / "index.html"
+        if html.exists():
+            return HTMLResponse(content=html.read_text(encoding="utf-8"))
+        raise HTTPException(503, "Frontend not built")
+
+    # Remaining static files (favicon, manifest, etc.)
+    @app.get("/{file_path:path}", include_in_schema=False)
+    async def serve_static_file(file_path: str):
+        target = FRONTEND_OUT / file_path
+        if target.exists() and target.is_file():
+            return FileResponse(str(target))
+        # SPA fallback for any unknown path
+        html = FRONTEND_OUT / "index.html"
+        if html.exists():
+            return HTMLResponse(content=html.read_text(encoding="utf-8"))
+        raise HTTPException(404, "Not found")
