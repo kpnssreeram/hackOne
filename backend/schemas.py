@@ -161,6 +161,10 @@ class ConstitutionReport(BaseModel):
     checks: list[ConstitutionCheck]
     repaired_script_patch: Optional[str] = None  # only changed lines
 
+class ConstitutionRepairBody(BaseModel):
+    rule_number: int = Field(ge=1, le=8)
+    repair: str = Field(min_length=1, max_length=4000)
+
 
 # ─── Production Script ───────────────────────────────────────────────────────
 
@@ -213,6 +217,9 @@ class VoiceCameoConsent(BaseModel):
 class SessionPreferences(BaseModel):
     """Creator-controlled settings. Never infer a person's gender from audio."""
     output_language: str = Field(default="auto", max_length=48)
+    # The format is chosen explicitly after the idea is captured. Audio is the
+    # default because it never needs creator-owned visual media.
+    output_mode: Literal["audio", "video"] = "audio"
     # Character name -> either ``auto:<presentation>`` or ``voice:<ElevenLabs
     # voice id>``. Legacy feminine/masculine/neutral values remain accepted.
     voice_cast: dict[str, str] = Field(default_factory=dict)
@@ -229,7 +236,7 @@ class VoiceCameoResult(BaseModel):
 class VisualBeat(BaseModel):
     id: str
     start_seconds: int = Field(ge=0)
-    duration_seconds: int = Field(gt=0, le=20)
+    duration_seconds: int = Field(gt=0, le=600)
     kind: Literal["user_video", "portrait_card", "generated_scene", "title_card"]
     purpose: str
     visual_prompt: str
@@ -240,7 +247,10 @@ class VisualBeat(BaseModel):
 class VisualEpisodePlan(BaseModel):
     title: str
     aspect_ratio: Literal["9:16"] = "9:16"
-    target_duration_seconds: int = Field(default=90, ge=30, le=90)
+    # The visual edit follows the final audio duration. Sora may provide a
+    # shorter generated scene, but the packaged episode is always extended to
+    # this exact target with the approved audio as the source of truth.
+    target_duration_seconds: int = Field(default=90, ge=60, le=3600)
     style: str
     protagonist_description: str
     beats: list[VisualBeat]
@@ -254,6 +264,7 @@ class VisualEpisodeResult(BaseModel):
     message: Optional[str] = None
     provider_job_id: Optional[str] = None
     progress: Optional[int] = None
+    duration_seconds: Optional[float] = None
 
 
 # ─── Three-Episode Story ─────────────────────────────────────────────────────
@@ -307,6 +318,7 @@ class StoryEpisode(BaseModel):
     continuity_summary: Optional[str] = None
     audio_url: Optional[str] = None
     cover_image_url: Optional[str] = None
+    poster_prompt: Optional[str] = None
     actual_duration_seconds: Optional[float] = None
     visual_episode_plan: Optional[VisualEpisodePlan] = None
     visual_episode: Optional[VisualEpisodeResult] = None
@@ -336,6 +348,7 @@ class Session(BaseModel):
     creative_lock_diff: Optional[CreativeLockDiff] = None
     audio_url: Optional[str] = None
     cover_image_url: Optional[str] = None
+    poster_prompt: Optional[str] = None
     visual_episode_plan: Optional[VisualEpisodePlan] = None
     visual_episode: Optional[VisualEpisodeResult] = None
     # The complete story is planned at once, but costly media is created only

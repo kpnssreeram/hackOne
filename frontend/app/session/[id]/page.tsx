@@ -7,18 +7,19 @@ import { api } from '@/lib/api'
 import {
   Mic, Lock, Unlock, Play, Pause, CheckCircle, XCircle,
   Sparkles, Radio, Loader2, Volume2, GitBranch, Shield,
-  Wand2, ChevronRight, ChevronDown, ArrowRight, RefreshCw, Zap, Film, Upload,
+  Wand2, ChevronRight, ChevronDown, RefreshCw, Film, Upload, Bot, X, CircleDot,
 } from 'lucide-react'
 
 // ─── Step definition ──────────────────────────────────────────────────────────
 const STEPS = [
-  { id: 'dna',         label: 'Your story',      icon: Sparkles  },
-  { id: 'visions',     label: 'Choose a feeling',icon: GitBranch },
-  { id: 'production',  label: 'Make it real',    icon: Shield    },
-  { id: 'audio',       label: 'Your episode',    icon: Volume2   },
+  { id: 'dna',         label: 'Story',      icon: Sparkles  },
+  { id: 'visions',     label: 'Direction',  icon: GitBranch },
+  { id: 'production',  label: 'Script',     icon: Shield    },
+  { id: 'audio',       label: 'Episode',    icon: Volume2   },
 ]
 
 type Step = 'dna' | 'visions' | 'production' | 'audio'
+type SeriesFormat = 'audio' | 'video'
 
 type DNA = {
   core_emotion: string; audience_promise: string
@@ -46,9 +47,11 @@ type EpisodeOutline = {
   number: number; title: string; what_happens: string; emotional_turn: string; ending_promise: string
 }
 type EpisodeFeedback = { keep: string; change_this_episode: string; next_direction: string }
+type ScriptLine = { type: 'ambience' | 'sfx' | 'silence' | 'dialogue' | 'music'; character?: string | null; text?: string | null; emotion?: string | null; voice_note?: string | null; duration_seconds?: number | null; description?: string | null }
+type ProductionScript = { title: string; lines: ScriptLine[]; estimated_duration_seconds: number }
 type StoryEpisode = {
   number: number; outline: EpisodeOutline; status: EpisodeStatus
-  production_script?: { title: string; lines: unknown[]; estimated_duration_seconds: number } | null
+  production_script?: ProductionScript | null; poster_prompt?: string | null
   constitution_report?: { checks: Check[]; overall_score: number } | null
   feedback?: EpisodeFeedback | null; continuity_summary?: string | null
   audio_url?: string | null; cover_image_url?: string | null; actual_duration_seconds?: number | null
@@ -61,6 +64,17 @@ type SeriesPlan = {
 type StoryAsset = { id: string; kind: 'photo' | 'video' | 'place_reference'; filename: string; url: string; consented: boolean }
 type VisualEpisodeResult = { status: 'planned' | 'rendering' | 'ready' | 'failed'; url?: string | null; message?: string | null; provider_job_id?: string | null; progress?: number | null }
 
+const CONSTITUTION_RULES = [
+  { rule_number: 1, rule: 'Hook within 15 seconds' },
+  { rule_number: 2, rule: 'Audio clarity' },
+  { rule_number: 3, rule: 'Escalation' },
+  { rule_number: 4, rule: 'Motivation' },
+  { rule_number: 5, rule: 'Sound purpose' },
+  { rule_number: 6, rule: 'Narration economy' },
+  { rule_number: 7, rule: 'Cliffhanger / ending payoff' },
+  { rule_number: 8, rule: 'DNA lock' },
+]
+
 const AGENT_COLOR: Record<string, string> = {
   muse: 'text-purple-400', writer: 'text-blue-400',
   supervisor: 'text-yellow-400', audio_director: 'text-green-400',
@@ -70,6 +84,7 @@ const AGENT_COLOR: Record<string, string> = {
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
 const CAMEO_MAX_SECONDS = 10
+const MIN_AUDIO_SECONDS = 60
 const CAMEO_SAMPLE_SCRIPTS: Record<string, string> = {
   en: 'I confirm this is my voice. I am speaking clearly and naturally for Nolan. The rain is coming, and something important is about to change.',
   hi: 'मैं पुष्टि करता या करती हूँ कि यह मेरी आवाज़ है। मैं नोलन के लिए साफ़ और स्वाभाविक रूप से बोल रहा या रही हूँ। बारिश आ रही है, और कुछ महत्वपूर्ण बदलने वाला है।',
@@ -101,11 +116,18 @@ export default function SessionPage() {
   const [characterHints, setCharacterHints] = useState('')
   const [storyError, setStoryError] = useState('')
   const [studioUpdate, setStudioUpdate] = useState<StudioUpdate>({ role: 'Muse', text: 'Ready to discover the heart of your story.', color: 'purple' })
+  const [jarvisOpen, setJarvisOpen] = useState(false)
 
   const [dna, setDna] = useState<DNA | null>(null)
   const [lockedFields, setLockedFields] = useState<Set<string>>(new Set())
   const [voiceCast, setVoiceCast] = useState<Record<string, string>>({})
   const [voiceOptions, setVoiceOptions] = useState<VoiceOption[]>([])
+  const [seriesFormat, setSeriesFormat] = useState<SeriesFormat>('audio')
+  const [videoFileOne, setVideoFileOne] = useState<File | null>(null)
+  const [videoFileTwo, setVideoFileTwo] = useState<File | null>(null)
+  const [videoConsent, setVideoConsent] = useState(false)
+  const [videoUploadError, setVideoUploadError] = useState('')
+  const [videoSourcesSaved, setVideoSourcesSaved] = useState(false)
 
   const [visions, setVisions] = useState<Vision[]>([])
   const [selectedVision, setSelectedVision] = useState<string>('')
@@ -121,6 +143,7 @@ export default function SessionPage() {
   const [score, setScore] = useState<number | null>(null)
 
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
+  const [audioEpisodeNumber, setAudioEpisodeNumber] = useState<number | null>(null)
   const [audioError, setAudioError] = useState('')
   const [scriptReady, setScriptReady] = useState(false)
   const [playing, setPlaying] = useState(false)
@@ -129,9 +152,6 @@ export default function SessionPage() {
 
   const [revise, setRevise] = useState('')
   const [lockDiff, setLockDiff] = useState<any>(null)
-  const [portraitFile, setPortraitFile] = useState<File | null>(null)
-  const [liveVideoFile, setLiveVideoFile] = useState<File | null>(null)
-  const [visualConsent, setVisualConsent] = useState(false)
   const [visualError, setVisualError] = useState('')
   const [visualPlan, setVisualPlan] = useState<any>(null)
   const [visualResult, setVisualResult] = useState<VisualEpisodeResult | null>(null)
@@ -139,11 +159,15 @@ export default function SessionPage() {
   const [coverError, setCoverError] = useState('')
   const [coverGenerating, setCoverGenerating] = useState(false)
   const [coverIsFallback, setCoverIsFallback] = useState(false)
-  const [storyAssetFiles, setStoryAssetFiles] = useState<File[]>([])
-  const [storyAssetKind, setStoryAssetKind] = useState<'photo' | 'video' | 'place_reference'>('photo')
+  const [posterReferenceFile, setPosterReferenceFile] = useState<File | null>(null)
+  const [posterReferenceConsent, setPosterReferenceConsent] = useState(false)
+  const [posterReferenceSaved, setPosterReferenceSaved] = useState(false)
+  const [posterReferenceError, setPosterReferenceError] = useState('')
+  const [posterPrompt, setPosterPrompt] = useState('')
+  const [scriptEditMode, setScriptEditMode] = useState(false)
+  const [scriptDraft, setScriptDraft] = useState<ProductionScript | null>(null)
+  const [scriptSaveError, setScriptSaveError] = useState('')
   const [storyAssets, setStoryAssets] = useState<StoryAsset[]>([])
-  const [storyAssetConsent, setStoryAssetConsent] = useState(false)
-  const [storyAssetError, setStoryAssetError] = useState('')
   const [cameoFile, setCameoFile] = useState<File | null>(null)
   const [cameoStatus, setCameoStatus] = useState('')
   const [cameoConsent, setCameoConsent] = useState(false)
@@ -165,6 +189,16 @@ export default function SessionPage() {
   useEffect(() => {
     if (termRef.current) termRef.current.scrollTop = termRef.current.scrollHeight
   }, [termLines, tokenBuf])
+
+  useEffect(() => {
+    const episode = episodes.find(item => item.number === activeEpisodeNumber)
+    if (episode?.production_script) {
+      setScriptDraft(JSON.parse(JSON.stringify(episode.production_script)))
+      setScriptEditMode(false)
+      setScriptSaveError('')
+      setPosterPrompt(episode.poster_prompt || '')
+    }
+  }, [activeEpisodeNumber, episodes])
 
   const pushLine = useCallback((agent: string, text: string, type = 'status') => {
     setTermLines(prev => [...prev, { agent, text, type }])
@@ -230,11 +264,15 @@ export default function SessionPage() {
     if (!saved?.creative_dna) return
     setDna(saved.creative_dna)
     setLockedFields(new Set(saved.creative_dna.locked_fields || []))
+    setSeriesFormat(saved.preferences?.output_mode === 'video' ? 'video' : 'audio')
+    setVoiceCast(saved.preferences?.voice_cast || {})
     setVisions(saved.visions || [])
     setSelectedVision(saved.selected_vision?.primary_vision_id || '')
     setSeriesPlan(saved.series_plan || null)
     setEpisodes(saved.episodes || [])
     setStoryAssets(saved.visual_assets || [])
+    setPosterReferenceSaved((saved.visual_assets || []).some((asset: StoryAsset) => asset.kind === 'photo' && asset.filename.startsWith('poster-reference-')))
+    setVideoSourcesSaved((saved.visual_assets || []).filter((asset: StoryAsset) => asset.kind === 'video' && asset.filename.startsWith('series-video_')).length >= 2)
 
     const activeNumber = saved.active_episode_number || 1
     const activeEpisode = (saved.episodes || []).find((episode: StoryEpisode) => episode.number === activeNumber)
@@ -248,12 +286,24 @@ export default function SessionPage() {
     setVisualPlan(activeEpisode?.visual_episode_plan || saved.visual_episode_plan || null)
     setVisualResult(activeEpisode?.visual_episode || saved.visual_episode || null)
 
-    const audio = activeEpisode?.audio_url || saved.audio_url
+    // A series can legitimately be on Episode 2 while only Episode 1 has
+    // finished rendering. Prefer the active episode when it has audio, then
+    // fall back to the newest playable episode. Never let an empty active
+    // draft erase an older playable episode from the UI.
+    const savedEpisodes = (saved.episodes || []) as StoryEpisode[]
+    const playableEpisode = activeEpisode?.audio_url
+      ? activeEpisode
+      : [...savedEpisodes].sort((a, b) => b.number - a.number).find(episode => episode.audio_url)
+    const audio = playableEpisode?.audio_url || (!saved.series_plan ? saved.audio_url : null)
     if (audio) {
       setAudioUrl(api.absoluteUrl(audio))
+      setAudioEpisodeNumber(playableEpisode?.number || null)
       setStep('audio')
     } else if (activeEpisode?.production_script || saved.production_script) {
-      setAudioUrl(null)
+      if (!saved.series_plan) {
+        setAudioUrl(null)
+        setAudioEpisodeNumber(null)
+      }
       setStep('production')
       if (saved.status === 'CONSTITUTION_DONE' || saved.status === 'ERROR' || saved.status === 'SCRIPT_READY') {
         setAudioError('The story is ready, but the audio take needs another render.')
@@ -348,8 +398,14 @@ export default function SessionPage() {
         if (episode.cover_image_url) {
           setCoverImageUrl(api.absoluteUrl(episode.cover_image_url))
           setCoverIsFallback(episode.cover_image_url.endsWith('.svg'))
+        } else {
+          setCoverImageUrl(null)
+          setCoverIsFallback(false)
         }
-        if (episode.audio_url) setAudioUrl(api.absoluteUrl(episode.audio_url))
+        if (episode.audio_url) {
+          setAudioUrl(api.absoluteUrl(episode.audio_url))
+          setAudioEpisodeNumber(episode.number)
+        }
         setStep(episode.audio_url ? 'audio' : 'production')
       }
       if (d?.visual_episode) setVisualResult(d.visual_episode as VisualEpisodeResult)
@@ -367,6 +423,7 @@ export default function SessionPage() {
       const d = typeof e.data === 'object' ? e.data : {}
       if (d.url || d.audio_url) {
         setAudioUrl(api.absoluteUrl(d.url || d.audio_url))
+        setAudioEpisodeNumber(typeof d.episode_number === 'number' ? d.episode_number : null)
         setStep('audio')
       } else if (typeof d.status === 'string' && (d.status.startsWith('EPISODE_') || d.status === 'SERIES_COMPLETE')) {
         void refreshSession().catch(() => undefined)
@@ -459,6 +516,7 @@ export default function SessionPage() {
       if (latestSession?.audio_url) {
         hydrateSession(latestSession)
         setAudioUrl(api.absoluteUrl(latestSession.audio_url))
+        setAudioEpisodeNumber(latestSession.active_episode_number || null)
         setStep('audio')
         return 'audio_ready'
       }
@@ -483,6 +541,50 @@ export default function SessionPage() {
   }, [isWorkflowActive, markScriptReady, sessionId, hydrateSession])
 
   // ─── Actions ──────────────────────────────────────────────────────────────────
+  function chooseSeriesFormat(format: SeriesFormat) {
+    setSeriesFormat(format)
+    setVideoUploadError('')
+    if (format === 'audio') {
+      setVideoFileOne(null)
+      setVideoFileTwo(null)
+      setVideoConsent(false)
+    }
+    void api.updatePreferences(sessionId, requestedLanguage, voiceCast, format).catch(error => {
+      console.error(error)
+      setVideoUploadError('That format choice could not be saved yet. Please try again before rendering.')
+    })
+  }
+
+  async function doSaveVideoSources() {
+    if (seriesFormat !== 'video') return
+    if (!videoFileOne || !videoFileTwo) {
+      setVideoUploadError('Choose both source videos before continuing.')
+      return
+    }
+    if (!videoConsent) {
+      setVideoUploadError('Confirm that you own both videos or have permission to use them.')
+      return
+    }
+    setBusy(true)
+    setVideoUploadError('')
+    try {
+      await api.updatePreferences(sessionId, requestedLanguage, voiceCast, 'video')
+      await api.uploadSeriesVideo(sessionId, 'video_1', videoFileOne, true)
+      await api.uploadSeriesVideo(sessionId, 'video_2', videoFileTwo, true)
+      await refreshSession()
+      setVideoSourcesSaved(true)
+      setVideoFileOne(null)
+      setVideoFileTwo(null)
+      setVideoConsent(false)
+      pushLine('visual_director', 'Both source videos are saved. Nolan will cut them to the final audio master.', 'complete')
+    } catch (error) {
+      console.error(error)
+      setVideoUploadError('Nolan could not save both videos. Check the file types and try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function doGenerateVisions() {
     if (!dna) return
     const runId = beginWorkflow()
@@ -532,15 +634,19 @@ export default function SessionPage() {
     setScore(episode.constitution_report?.overall_score ?? null)
     setScriptReady(Boolean(episode.production_script))
     setVisualPlan(episode.visual_episode_plan || null)
+    setVisualResult(episode.visual_episode || null)
     if (episode.cover_image_url) {
       setCoverImageUrl(api.absoluteUrl(episode.cover_image_url))
       setCoverIsFallback(episode.cover_image_url.endsWith('.svg'))
+    } else {
+      setCoverImageUrl(null)
+      setCoverIsFallback(false)
     }
     if (episode.audio_url) {
       setAudioUrl(api.absoluteUrl(episode.audio_url))
+      setAudioEpisodeNumber(episode.number)
       setStep('audio')
     } else {
-      setAudioUrl(null)
       setStep('production')
     }
   }
@@ -566,12 +672,13 @@ export default function SessionPage() {
     const runId = beginWorkflow()
     setStep('production')
     setAudioUrl(null)
+    setAudioEpisodeNumber(null)
     setAudioError('')
     setChecks([])
     setSeriesPlan(null)
     setEpisodes([])
     try {
-      await api.updatePreferences(sessionId, requestedLanguage, voiceCast)
+      await api.updatePreferences(sessionId, requestedLanguage, voiceCast, seriesFormat)
       if (!isWorkflowActive(runId)) return
       setSseUrl(api.eventsUrl(sessionId))
       setStudioUpdate({ role: 'Writer', text: 'Building the full three-episode arc before we spend on audio or visuals.', color: 'blue' })
@@ -615,8 +722,12 @@ export default function SessionPage() {
   async function doConfirmEpisode(episodeNumber: number) {
     const episode = episodeByNumber(episodeNumber)
     if (!episode?.production_script) return
+    if (seriesFormat === 'video' && !videoSourcesSaved && storyAssets.filter(asset => asset.kind === 'video' && asset.filename.startsWith('series-video_')).length < 2) {
+      setVideoUploadError('Save both source videos before generating a video episode.')
+      setStep('production')
+      return
+    }
     const runId = beginWorkflow()
-    setAudioUrl(null)
     setAudioError('')
     selectSeriesEpisode(episode)
     try {
@@ -636,8 +747,8 @@ export default function SessionPage() {
     }
   }
 
-  async function doEpisodeFeedback(episodeNumber: number, action: 'revise' | 'continue') {
-    const feedback = episodeFeedback[episodeNumber] || { keep: '', change_this_episode: '', next_direction: '' }
+  async function doEpisodeFeedback(episodeNumber: number, action: 'revise' | 'continue', feedbackOverride?: EpisodeFeedback) {
+    const feedback = feedbackOverride || episodeFeedback[episodeNumber] || { keep: '', change_this_episode: '', next_direction: '' }
     if (action === 'revise' && !feedback.change_this_episode.trim()) {
       pushLine('director', 'Tell Nolan what should change in this episode first.', 'error')
       return
@@ -671,6 +782,59 @@ export default function SessionPage() {
     }
   }
 
+  async function applyConstitutionRepair(check: Check) {
+    const repair = check.repair?.trim()
+    if (!repair || busy) return
+
+    if (!seriesPlan) {
+      await doRevise(repair)
+      return
+    }
+
+    const episode = episodeByNumber(activeEpisodeNumber)
+    if (!episode?.production_script) {
+      setEpisodeFeedback(previous => ({
+        ...previous,
+        [activeEpisodeNumber]: {
+          ...(previous[activeEpisodeNumber] || { keep: '', change_this_episode: '', next_direction: '' }),
+          change_this_episode: repair,
+        },
+      }))
+      pushLine('supervisor', 'The suggested repair is ready in the episode notes. Draft the episode before applying it.', 'repair')
+      return
+    }
+
+    if (seriesPlan) {
+      const runId = beginWorkflow()
+      try {
+        const result = await api.applyConstitutionRepair(sessionId, activeEpisodeNumber, check.rule_number, repair)
+        const repairedEpisode = result.episode as StoryEpisode
+        setEpisodes(previous => previous.some(item => item.number === repairedEpisode.number)
+          ? previous.map(item => item.number === repairedEpisode.number ? repairedEpisode : item)
+          : [...previous, repairedEpisode])
+        selectSeriesEpisode(repairedEpisode)
+        setChecks(repairedEpisode.constitution_report?.checks || [])
+        setScore(repairedEpisode.constitution_report?.overall_score ?? null)
+        setScriptReady(Boolean(repairedEpisode.production_script))
+        pushLine('supervisor', `✓ Rule ${check.rule_number} repaired immediately. The updated episode is ready to review.`, 'repair')
+      } catch (error) {
+        console.error(error)
+        if (isWorkflowActive(runId)) pushLine('supervisor', 'The fast repair could not be applied. Please try again.', 'error')
+      } finally {
+        finishWorkflow(runId)
+      }
+      return
+    }
+
+    const feedback: EpisodeFeedback = {
+      keep: 'Preserve every Constitution rule that already passed, plus all locked story details.',
+      change_this_episode: repair,
+      next_direction: '',
+    }
+    setEpisodeFeedback(previous => ({ ...previous, [activeEpisodeNumber]: feedback }))
+    await doEpisodeFeedback(activeEpisodeNumber, 'revise', feedback)
+  }
+
   async function doProduce() {
     if (!selectedVision) return
     const runId = beginWorkflow()
@@ -680,7 +844,7 @@ export default function SessionPage() {
     setAudioError('')
     let savingPreferences = true
     try {
-      await api.updatePreferences(sessionId, requestedLanguage, voiceCast)
+      await api.updatePreferences(sessionId, requestedLanguage, voiceCast, seriesFormat)
       savingPreferences = false
       if (!isWorkflowActive(runId)) return
 
@@ -717,8 +881,8 @@ export default function SessionPage() {
     }
   }
 
-  async function doRevise() {
-    const changeInstruction = revise.trim()
+  async function doRevise(changeOverride?: string) {
+    const changeInstruction = (changeOverride ?? revise).trim()
     if (!changeInstruction) return
     const runId = beginWorkflow()
     setLockDiff(null)
@@ -749,34 +913,18 @@ export default function SessionPage() {
   }
 
   async function doPlanVisualEpisode() {
-    if (seriesPlan) {
-      setBusy(true)
-      setVisualError('')
-      try {
-        setVisualPlan(await api.planVisualEpisode(sessionId, false, false, activeEpisodeNumber))
-        await refreshSession()
-      } catch (error) {
-        console.error(error)
-        setVisualError('Nolan could not plan this visual version. Please try again.')
-      } finally {
-        setBusy(false)
-      }
-      return
-    }
-    const hasCreatorMedia = Boolean(portraitFile || liveVideoFile)
-    if (hasCreatorMedia && !visualConsent) {
-      setVisualError('Please confirm that you own these files and consent to their use in this visual edit.')
+    if (seriesFormat !== 'video' || !videoSourcesSaved) {
+      setVisualError('Save both source videos before planning the video cut.')
       return
     }
     setBusy(true)
     setVisualError('')
     try {
-      if (portraitFile) await api.uploadVisualAsset(sessionId, 'portrait', portraitFile, visualConsent)
-      if (liveVideoFile) await api.uploadVisualAsset(sessionId, 'live_video', liveVideoFile, visualConsent)
-      setVisualPlan(await api.planVisualEpisode(sessionId, Boolean(portraitFile && visualConsent), Boolean(liveVideoFile && visualConsent)))
+      setVisualPlan(await api.planVisualEpisode(sessionId, false, true, activeEpisodeNumber))
+      await refreshSession()
     } catch (error) {
       console.error(error)
-      setVisualError('Nolan could not save those visual files. Please try again.')
+      setVisualError('Nolan could not plan this video cut. Please try again.')
     } finally { setBusy(false) }
   }
 
@@ -791,34 +939,24 @@ export default function SessionPage() {
       setSseUrl(api.eventsUrl(sessionId))
       const result = await api.renderVideoTeaser(sessionId, seriesPlan ? activeEpisodeNumber : undefined)
       setVisualResult(result)
-      pushLine('visual_director', 'Making a 20-second story teaser. You can keep using the studio while it renders.')
+      pushLine('visual_director', 'Cutting both source videos to the final audio master length.')
     } catch (error) {
       console.error(error)
-      setVisualError('Nolan could not start the video teaser. Check your OpenAI video access and try again.')
+      setVisualError('Nolan could not build the video cut. Check that both source videos are still available and try again.')
     } finally {
       setBusy(false)
     }
   }
 
-  async function doUploadStoryAssets() {
-    if (!storyAssetFiles.length) return
-    if (!storyAssetConsent) {
-      setStoryAssetError('Please confirm that you own these files and want Nolan to place them in your story.')
-      return
-    }
+  async function doComposeEpisodeVideo() {
     setBusy(true)
-    setStoryAssetError('')
+    setVisualError('')
     try {
-      for (const file of storyAssetFiles) {
-        await api.uploadStoryAsset(sessionId, storyAssetKind, file, true)
-      }
-      await refreshSession()
-      setStoryAssetFiles([])
-      setStoryAssetConsent(false)
-      pushLine('visual_director', 'Your media is ready for the visual plan. Nolan will use it as real footage or a place reference, not replace it.', 'complete')
+      const result = await api.composeEpisodeVideo(sessionId, seriesPlan ? activeEpisodeNumber : undefined)
+      setVisualResult(result)
     } catch (error) {
       console.error(error)
-      setStoryAssetError('Nolan could not save those files. Please try again.')
+      setVisualError('Nolan could not package this scene with the episode audio. Please try again.')
     } finally {
       setBusy(false)
     }
@@ -828,12 +966,57 @@ export default function SessionPage() {
     setCoverGenerating(true)
     setCoverError('')
     try {
-      const result = await api.generateCoverImage(sessionId, seriesPlan ? activeEpisodeNumber : undefined)
+      const result = await api.generateCoverImage(sessionId, seriesPlan ? activeEpisodeNumber : undefined, posterPrompt)
       setCoverImageUrl(api.absoluteUrl(result.url))
       setCoverIsFallback(!result.generated)
     } catch (error) {
       console.error(error)
       setCoverError('Nolan could not create the cover. Please try again.')
+    } finally {
+      setCoverGenerating(false)
+    }
+  }
+
+  async function saveScreenplay() {
+    if (!scriptDraft || !seriesPlan) return
+    setBusy(true)
+    setScriptSaveError('')
+    try {
+      const result = await api.updateEpisodeScript(sessionId, activeEpisodeNumber, scriptDraft)
+      const updated = result.episode as StoryEpisode
+      setEpisodes(previous => previous.map(item => item.number === updated.number ? updated : item))
+      setChecks(updated.constitution_report?.checks || [])
+      setScore(updated.constitution_report?.overall_score ?? null)
+      setScriptEditMode(false)
+      setCoverImageUrl(null)
+      pushLine('writer', `Episode ${activeEpisodeNumber} screenplay saved. Its next audio take will use these dialogue, SFX, and pause cues.`, 'complete')
+    } catch (error) {
+      console.error(error)
+      setScriptSaveError('The screenplay could not be saved. Please try again.')
+    } finally { setBusy(false) }
+  }
+
+  async function doSavePosterReference() {
+    if (!posterReferenceFile || !posterReferenceConsent) {
+      setPosterReferenceError('Choose an image and confirm that you can use it.')
+      return
+    }
+    if (posterReferenceFile.size > 5 * 1024 * 1024) {
+      setPosterReferenceError('Use an image under 5 MB for a fast poster render.')
+      return
+    }
+    setPosterReferenceError('')
+    setCoverGenerating(true)
+    try {
+      const asset = await api.uploadPosterReference(sessionId, posterReferenceFile, true)
+      setStoryAssets(previous => [...previous.filter(item => !item.filename.startsWith('poster-reference-')), asset])
+      setPosterReferenceSaved(true)
+      setPosterReferenceFile(null)
+      setPosterReferenceConsent(false)
+      pushLine('visual_director', 'Poster reference saved. Nolan will use its mood and composition for the next cover.', 'complete')
+    } catch (error) {
+      console.error(error)
+      setPosterReferenceError('Nolan could not save that reference image. Please try again.')
     } finally {
       setCoverGenerating(false)
     }
@@ -1014,6 +1197,11 @@ export default function SessionPage() {
   }
 
   const currentStepIdx = STEPS.findIndex(s => s.id === step)
+  const currentEpisode = episodeByNumber(activeEpisodeNumber)
+  const posterTitle = currentEpisode?.production_script?.title || currentEpisode?.outline.title || seriesPlan?.title || dna?.protagonist.name || 'Nolan Original'
+  const posterCast = dna
+    ? [dna.protagonist.name, ...(dna.characters || []).filter(character => character.name !== dna.protagonist.name).map(character => character.name)]
+    : []
   const voiceCastNames = dna
     ? Array.from(new Map(['Narrator', dna.protagonist.name, ...(dna.characters || []).map(c => c.name)]
       .filter(Boolean)
@@ -1047,43 +1235,41 @@ export default function SessionPage() {
   return (
     <div className="min-h-screen flex flex-col">
       {/* ── Top Bar ── */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-nolan-border/50">
-        <div className="flex items-center gap-2">
-          <Radio className="w-4 h-4 text-nolan-accent" />
-          <span className="font-bold text-sm tracking-wider">NOLAN <span className="text-nolan-muted font-normal">/ dream studio</span></span>
-        </div>
+      <header className="sticky top-0 z-30 border-b border-nolan-border/60 bg-nolan-bg/85 px-4 py-3 backdrop-blur-xl lg:px-7">
+        <div className="mx-auto flex max-w-6xl items-center gap-4">
+          <div className="flex shrink-0 items-center gap-2">
+            <Radio className="w-4 h-4 text-nolan-accent" />
+            <span className="font-bold text-sm tracking-[0.16em] text-white">NOLAN</span>
+          </div>
 
-        {/* Step progress */}
-        <div className="flex items-center gap-2">
+          <div className="creation-pipeline min-w-0 flex-1">
           {STEPS.map((s, i) => {
             const done = i < currentStepIdx
             const active = i === currentStepIdx
             return (
-              <span key={s.id} className="flex items-center gap-2">
-                <span className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full transition-all ${
-                  done   ? 'text-nolan-green bg-nolan-green/10' :
-                  active ? 'text-white bg-nolan-accent' :
-                           'text-nolan-muted'
-                }`}>
-                  {done ? <CheckCircle className="w-3 h-3" /> : <s.icon className="w-3 h-3" />}
-                  <span className="hidden sm:inline">{s.label}</span>
-                </span>
-                {i < STEPS.length - 1 && <ArrowRight className="w-3 h-3 text-nolan-border" />}
-              </span>
+              <div key={s.id} className="pipeline-stage">
+                <div className={`pipeline-dot ${done ? 'is-done' : active ? 'is-active' : ''}`}>
+                  {done ? <CheckCircle className="w-3.5 h-3.5" /> : <s.icon className="w-3.5 h-3.5" />}
+                </div>
+                <span className={`pipeline-label ${active ? 'is-active' : done ? 'is-done' : ''}`}>{s.label}</span>
+                {i < STEPS.length - 1 && <span className={`pipeline-line ${i < currentStepIdx ? 'is-done' : ''}`} />}
+              </div>
             )
           })}
         </div>
 
-        {busy && <div className="flex items-center gap-2 text-xs text-nolan-accent">
-          <Loader2 className="w-3 h-3 animate-spin" /> Working...
-        </div>}
+          <button type="button" onClick={() => setJarvisOpen(true)} className="jarvis-trigger shrink-0" aria-label="Open Jarvis studio assistant">
+            <span className="jarvis-core"><Bot className="w-5 h-5" /></span>
+            <span className="hidden text-[10px] font-semibold tracking-[0.12em] text-nolan-accent md:inline">JARVIS</span>
+            {busy && <span className="jarvis-live" />}
+          </button>
+        </div>
       </header>
 
       {/* ── Body ── */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 gap-0 overflow-hidden">
+      <div className="flex-1 min-w-0">
 
-        {/* LEFT — Main content (3 cols) */}
-        <div className="lg:col-span-3 p-5 flex flex-col gap-5 overflow-y-auto">
+        <main className="mx-auto flex w-full max-w-6xl flex-col gap-5 p-4 sm:p-6">
 
           {!dna && !busy && (
             <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-5">
@@ -1133,6 +1319,57 @@ export default function SessionPage() {
                 {(dna.characters || []).length > 1 && <div className="mt-4"><p className="text-[10px] uppercase tracking-widest text-nolan-muted mb-2">The people in this episode</p><div className="grid sm:grid-cols-2 gap-2">{(dna.characters || []).filter((c: any) => c.name !== dna.protagonist.name).map((c: any) => <div key={c.name} className="rounded-xl bg-black/20 p-3"><p className="text-sm text-white">{c.name} <span className="text-nolan-muted">· {c.role}</span></p><p className="text-[11px] text-nolan-muted mt-1">{c.relationship_to_protagonist} — {c.secret_or_tension}</p></div>)}</div></div>}
                 <p className="text-xs text-nolan-gold mt-4">Keep these details: {dna.non_negotiables.join(' · ')}</p>
                 <div className="flex gap-2 flex-wrap pt-3">{dna.tone.map(t => <Tag key={t} text={t} color="purple" />)}{dna.symbols.map(s => <Tag key={s} text={s} color="default" />)}</div>
+              </div>
+              <div className="glass rounded-xl p-4 mt-3 border border-nolan-accent/30">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold text-white">Choose your series format</p>
+                    <p className="text-[11px] text-nolan-muted mt-1">This decides what Nolan is allowed to produce after the story is approved.</p>
+                  </div>
+                  <span className="rounded-full bg-nolan-surface px-2 py-1 text-[10px] text-nolan-muted">{seriesFormat === 'audio' ? 'Audio-only' : 'Video + audio'}</span>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-2 mt-3">
+                  <button type="button" onClick={() => chooseSeriesFormat('audio')} disabled={busy}
+                    className={`rounded-xl border p-3 text-left transition-all ${seriesFormat === 'audio' ? 'border-nolan-accent bg-nolan-accent/10' : 'border-nolan-border/60 bg-black/10 hover:border-nolan-accent/50'}`}>
+                    <div className="flex items-center gap-2"><Volume2 className="w-4 h-4 text-nolan-accent" /><span className="text-xs font-semibold text-white">Audio series</span></div>
+                    <p className="text-[10px] leading-4 text-nolan-muted mt-2">A podcast-style episode with a generated poster and no visual uploads.</p>
+                    <p className="text-[10px] text-nolan-green mt-2">✓ Minimum 60-second audio master</p>
+                  </button>
+                  <button type="button" onClick={() => chooseSeriesFormat('video')} disabled={busy}
+                    className={`rounded-xl border p-3 text-left transition-all ${seriesFormat === 'video' ? 'border-pink-300 bg-pink-300/10' : 'border-nolan-border/60 bg-black/10 hover:border-pink-300/50'}`}>
+                    <div className="flex items-center gap-2"><Film className="w-4 h-4 text-pink-200" /><span className="text-xs font-semibold text-white">Video series</span></div>
+                    <p className="text-[10px] leading-4 text-nolan-muted mt-2">A cut using both of your source videos, synced to the final audio length.</p>
+                    <p className="text-[10px] text-pink-200 mt-2">Two videos required before render</p>
+                  </button>
+                </div>
+                {seriesFormat === 'audio' ? (
+                  <div className="mt-3 rounded-lg bg-nolan-surface/70 px-3 py-2 text-[10px] leading-4 text-nolan-muted">
+                    Your finished episode will feel like a premium audio show: rotating album art, rich sound design, and a dynamically written poster.
+                  </div>
+                ) : (
+                  <div className="mt-3 rounded-lg border border-pink-300/20 bg-pink-300/5 p-3">
+                    <p className="text-[10px] uppercase tracking-widest text-pink-200">Two source videos</p>
+                    <p className="mt-1 text-[10px] leading-4 text-nolan-muted">Upload both clips. Nolan uses them as editorial footage and cuts the finished video to the audio master — no image uploads, no missing source footage.</p>
+                    <div className="grid sm:grid-cols-2 gap-2 mt-3">
+                      <label className="rounded-lg border border-nolan-border/70 bg-black/20 p-3 text-[10px] text-nolan-muted cursor-pointer hover:border-pink-300/60">
+                        <span className="block text-xs font-semibold text-white">Source video 01</span>
+                        <span className="block mt-1 truncate">{videoFileOne?.name || 'Choose a video file'}</span>
+                        <input type="file" accept="video/*" className="hidden" disabled={busy} onChange={event => { setVideoFileOne(event.target.files?.[0] || null); setVideoSourcesSaved(false); setVideoUploadError('') }} />
+                      </label>
+                      <label className="rounded-lg border border-nolan-border/70 bg-black/20 p-3 text-[10px] text-nolan-muted cursor-pointer hover:border-pink-300/60">
+                        <span className="block text-xs font-semibold text-white">Source video 02</span>
+                        <span className="block mt-1 truncate">{videoFileTwo?.name || 'Choose a video file'}</span>
+                        <input type="file" accept="video/*" className="hidden" disabled={busy} onChange={event => { setVideoFileTwo(event.target.files?.[0] || null); setVideoSourcesSaved(false); setVideoUploadError('') }} />
+                      </label>
+                    </div>
+                    <label className="mt-3 flex items-start gap-2 text-[10px] text-nolan-muted"><input type="checkbox" checked={videoConsent} disabled={busy} onChange={event => setVideoConsent(event.target.checked)} className="mt-0.5" />I own both videos or have permission to use them in this series.</label>
+                    <button type="button" onClick={doSaveVideoSources} disabled={busy || !videoFileOne || !videoFileTwo || !videoConsent} className="mt-3 w-full rounded-lg bg-pink-300 py-2 text-[11px] font-semibold text-slate-950 hover:bg-pink-200 disabled:opacity-40 flex items-center justify-center gap-2">
+                      {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}{videoSourcesSaved ? 'Both videos saved' : 'Save both source videos'}
+                    </button>
+                    {videoSourcesSaved && <p className="mt-2 text-center text-[10px] text-nolan-green">✓ Both videos are ready. The video render stays locked until the audio master exists.</p>}
+                    {videoUploadError && <p className="mt-2 text-[10px] text-red-300">{videoUploadError}</p>}
+                  </div>
+                )}
               </div>
               <div className="glass rounded-xl p-4 mt-3">
                 <p className="text-xs font-semibold text-white">Choose the voices</p>
@@ -1342,137 +1579,187 @@ export default function SessionPage() {
                 })}
               </div>
 
-              <details className="glass rounded-xl mt-3 border border-pink-300/20 p-4">
-                <summary className="cursor-pointer text-xs font-semibold text-pink-200">Add your pictures, places, or clips (optional)</summary>
-                <p className="mt-2 text-[11px] leading-5 text-nolan-muted">Your files remain your original media. A place image can guide missing story scenes; a clip can be placed as real footage. Nolan never starts costly generated video by itself.</p>
-                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <select value={storyAssetKind} onChange={event => setStoryAssetKind(event.target.value as 'photo' | 'video' | 'place_reference')} className="rounded-lg border border-nolan-border bg-nolan-surface px-3 py-2 text-xs text-white">
-                    <option value="photo">My photo</option>
-                    <option value="place_reference">A place / location photo</option>
-                    <option value="video">My video clip</option>
-                  </select>
-                  <input type="file" multiple accept={storyAssetKind === 'video' ? 'video/*' : 'image/*'} onChange={event => setStoryAssetFiles(Array.from(event.target.files || []))} className="block w-full text-[11px] text-nolan-muted" />
-                </div>
-                {storyAssetFiles.length > 0 && <p className="mt-2 text-[11px] text-nolan-text">Ready: {storyAssetFiles.map(file => file.name).join(', ')}</p>}
-                <label className="mt-3 flex items-start gap-2 text-[11px] text-nolan-muted"><input type="checkbox" checked={storyAssetConsent} onChange={event => setStoryAssetConsent(event.target.checked)} className="mt-0.5" />I own these files or have permission to use them in this story.</label>
-                <button onClick={doUploadStoryAssets} disabled={busy || !storyAssetFiles.length || !storyAssetConsent} className="mt-3 w-full rounded-lg border border-pink-300/50 py-2 text-xs font-semibold text-pink-200 hover:bg-pink-300/10 disabled:opacity-40"><Upload className="mr-1.5 inline w-3.5 h-3.5" />Add to the visual plan</button>
-                {storyAssetError && <p className="mt-2 text-[11px] text-red-300">{storyAssetError}</p>}
-                {storyAssets.length > 0 && <p className="mt-2 text-[11px] text-pink-100">Ready for visual planning: {storyAssets.map(asset => asset.filename).join(' · ')}</p>}
-              </details>
+              <div className="episode-rail mt-5" aria-label="Episode library">
+                {seriesPlan.episode_outlines.map(outline => {
+                  const episode = episodeByNumber(outline.number)
+                  const selected = outline.number === activeEpisodeNumber
+                  const artwork = episode?.cover_image_url ? api.absoluteUrl(episode.cover_image_url) : ''
+                  return <button key={`rail-${outline.number}`} type="button" onClick={() => episode && selectSeriesEpisode(episode)}
+                    className={`episode-tile ${selected ? 'is-active' : ''}`} style={artwork ? { backgroundImage: `linear-gradient(0deg, rgba(3,10,20,.94), rgba(3,10,20,.15)), url(${artwork})` } : undefined}>
+                    <span className="text-[10px] uppercase tracking-[0.18em] text-nolan-accent">Episode {outline.number}</span>
+                    <strong className="mt-1 text-sm text-white">{outline.title}</strong>
+                    <span className="mt-auto text-[10px] text-nolan-muted">{episode?.audio_url ? 'Ready to play' : episode?.status === 'DRAFT_READY' ? 'Screenplay ready' : 'Coming next'}</span>
+                  </button>
+                })}
+              </div>
+
             </motion.section>
           )}
 
           {/* ── STEP 3: Constitution ── */}
-          {checks.length > 0 && !seriesPlan && (
+          {(checks.length > 0 || Boolean(seriesPlan)) && (
             <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
               <SectionHeader icon={<Shield className="w-4 h-4 text-yellow-400" />}
-                label="Story check" badge={score !== null ? `${score}/100` : undefined} />
-              <div className="glass rounded-xl p-4 space-y-2 mt-2">
-                {checks.sort((a,b) => a.rule_number - b.rule_number).map(c => (
-                  <ConstitutionRow key={c.rule_number} check={c} />
-                ))}
+                label={seriesPlan ? `Pocket FM Story Constitution · Episode ${activeEpisodeNumber}` : 'Pocket FM Story Constitution'} badge={score !== null ? `${score}/100` : undefined} />
+              <div className="glass rounded-xl p-4 mt-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <p className="text-[11px] text-nolan-muted">Eight real-time story gates. Failed rules show the evidence and a repair Nolan can apply.</p>
+                  <div className="flex items-center gap-2 text-[10px]">
+                    <span className="text-nolan-green">{checks.filter(check => check.passed).length} passed</span>
+                    <span className="text-nolan-red">{checks.filter(check => !check.passed).length} flagged</span>
+                    <span className="text-nolan-muted">{CONSTITUTION_RULES.length - checks.length} pending</span>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {CONSTITUTION_RULES.map(rule => {
+                    const check = checks.find(item => item.rule_number === rule.rule_number)
+                    return check
+                      ? <ConstitutionRow key={rule.rule_number} check={check} onRepair={applyConstitutionRepair} disabled={busy} />
+                      : <ConstitutionPendingRow key={rule.rule_number} rule={rule} />
+                  })}
+                </div>
               </div>
+            </motion.section>
+          )}
+
+          {seriesPlan && scriptDraft && (!audioUrl || audioEpisodeNumber !== activeEpisodeNumber) && (
+            <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+              <SectionHeader icon={<Film className="w-4 h-4 text-nolan-gold" />} label={`Episode ${activeEpisodeNumber} screenplay`} badge="Editable before audio" />
+              <ScreenplayPaper script={scriptDraft} editing={scriptEditMode} busy={busy} error={scriptSaveError}
+                onEdit={() => setScriptEditMode(true)}
+                onCancel={() => { const episode = episodeByNumber(activeEpisodeNumber); if (episode?.production_script) setScriptDraft(JSON.parse(JSON.stringify(episode.production_script))); setScriptEditMode(false) }}
+                onChange={setScriptDraft} onSave={saveScreenplay} />
             </motion.section>
           )}
 
           {/* ── STEP 4: Audio Pilot ── */}
           {audioUrl && (
             <motion.section initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}>
-              <SectionHeader icon={<Volume2 className="w-4 h-4 text-nolan-accent" />} label={seriesPlan ? `Episode ${activeEpisodeNumber} audio` : 'Your audio story'} />
+              <SectionHeader icon={<Volume2 className="w-4 h-4 text-nolan-accent" />} label={seriesPlan ? `Episode ${audioEpisodeNumber || activeEpisodeNumber} audio` : 'Your audio story'} />
+              <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+              {seriesPlan && scriptDraft && audioEpisodeNumber === activeEpisodeNumber && <ScreenplayPaper script={scriptDraft} editing={scriptEditMode} busy={busy} error={scriptSaveError}
+                onEdit={() => setScriptEditMode(true)} onCancel={() => setScriptEditMode(false)} onChange={setScriptDraft} onSave={saveScreenplay} compact />}
               <div className="glass rounded-xl p-5 mt-2 border border-nolan-accent/30"
                 style={{ boxShadow: '0 0 30px rgba(108,71,255,0.1)' }}>
+                {seriesPlan && audioEpisodeNumber && audioEpisodeNumber !== activeEpisodeNumber && (
+                  <p className="mb-4 rounded-lg border border-nolan-gold/20 bg-nolan-gold/5 px-3 py-2 text-[11px] text-nolan-gold">Episode {audioEpisodeNumber} stays available while Episode {activeEpisodeNumber} is being prepared.</p>
+                )}
                 <audio ref={audioRef} src={audioUrl}
                   onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
                   onLoadedMetadata={event => setAudioDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)}
                   onDurationChange={event => setAudioDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)}
                   onTimeUpdate={event => setAudioCurrentTime(event.currentTarget.currentTime)}
                   onEnded={() => { setPlaying(false); setAudioCurrentTime(audioDuration) }} className="hidden" />
-                {/* Waveform */}
-                <div className="flex items-center justify-center gap-0.5 h-10 mb-4">
-                  {Array.from({ length: 32 }).map((_, i) => (
-                    <motion.div key={i} className="w-1 rounded-full bg-nolan-accent"
-                      animate={playing ? { height: [3, 6 + Math.random() * 26, 3] } : { height: 3 }}
-                      transition={{ duration: 0.4 + Math.random() * 0.4, repeat: Infinity, delay: i * 0.04 }} />
-                  ))}
-                </div>
-                <div className="mb-4">
-                  <input
-                    aria-label="Episode progress"
-                    type="range"
-                    min="0"
-                    max={Math.max(audioDuration, 0.1)}
-                    step="0.1"
-                    value={Math.min(audioCurrentTime, audioDuration || 0)}
-                    disabled={!audioDuration}
-                    onChange={event => {
-                      const nextTime = Number(event.target.value)
-                      if (audioRef.current) audioRef.current.currentTime = nextTime
-                      setAudioCurrentTime(nextTime)
-                    }}
-                    className="w-full cursor-pointer accent-nolan-accent disabled:cursor-not-allowed disabled:opacity-40"
-                  />
-                  <div className="mt-1 flex justify-between text-[10px] tabular-nums text-nolan-muted">
-                    <span>{formatPlaybackTime(audioCurrentTime)}</span>
-                    <span>{formatPlaybackTime(audioDuration)}</span>
+                <div className="grid md:grid-cols-[180px_1fr] gap-5 items-center">
+                  <motion.div
+                    className="vinyl-record mx-auto"
+                    animate={playing ? { rotate: 360 } : { rotate: 0 }}
+                    transition={{ duration: 9, ease: 'linear', repeat: playing ? Infinity : 0 }}
+                    aria-label="Episode album art"
+                  >
+                    {coverImageUrl ? <img src={coverImageUrl} alt="Episode poster artwork" className="vinyl-art" /> : <div className="vinyl-art vinyl-art-fallback"><Film className="w-8 h-8 text-white/70" /></div>}
+                    <div className="vinyl-groove groove-one" />
+                    <div className="vinyl-groove groove-two" />
+                    <div className="vinyl-center"><span>NOLAN</span></div>
+                  </motion.div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.22em] text-nolan-accent">{seriesFormat === 'audio' ? 'Audio series · now playing' : 'Video series · audio master'}</p>
+                    <h2 className="text-xl font-bold text-white mt-1">{posterTitle}</h2>
+                    <p className="text-xs text-nolan-muted mt-1">Starring {posterCast[0] || 'the protagonist'} · Directed by Nolan</p>
+                    <div className="flex items-center justify-center gap-0.5 h-10 my-4">
+                      {Array.from({ length: 32 }).map((_, i) => (
+                        <motion.div key={i} className="w-1 rounded-full bg-nolan-accent/80"
+                          animate={playing ? { scaleY: [0.35, 1 + (i % 4) * 0.18, 0.35] } : { scaleY: 0.35 }}
+                          transition={{ duration: 0.55 + (i % 5) * 0.08, repeat: playing ? Infinity : 0, delay: i * 0.025 }}
+                          style={{ height: `${10 + (i % 5) * 4}px`, transformOrigin: 'center' }} />
+                      ))}
+                    </div>
+                    <div className="mb-4">
+                      <input
+                        aria-label="Episode progress"
+                        type="range"
+                        min="0"
+                        max={Math.max(audioDuration, 0.1)}
+                        step="0.1"
+                        value={Math.min(audioCurrentTime, audioDuration || 0)}
+                        disabled={!audioDuration}
+                        onChange={event => {
+                          const nextTime = Number(event.target.value)
+                          if (audioRef.current) audioRef.current.currentTime = nextTime
+                          setAudioCurrentTime(nextTime)
+                        }}
+                        className="w-full cursor-pointer accent-nolan-accent disabled:cursor-not-allowed disabled:opacity-40"
+                      />
+                      <div className="mt-1 flex justify-between text-[10px] tabular-nums text-nolan-muted">
+                        <span>{formatPlaybackTime(audioCurrentTime)}</span>
+                        <span>{formatPlaybackTime(audioDuration)}</span>
+                      </div>
+                    </div>
+                    <button onClick={() => playing ? audioRef.current?.pause() : audioRef.current?.play()}
+                      className="w-full py-3 bg-nolan-accent text-white rounded-xl font-bold tracking-wider text-sm flex items-center justify-center gap-3">
+                      {playing ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                      {playing ? 'Pause episode' : 'Play episode'}
+                    </button>
                   </div>
                 </div>
-                <button onClick={() => playing ? audioRef.current?.pause() : audioRef.current?.play()}
-                  className="w-full py-3 bg-nolan-accent text-white rounded-xl font-bold tracking-wider text-sm flex items-center justify-center gap-3">
-                  {playing ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-                  {playing ? 'Pause' : 'Play episode'}
-                </button>
+                {audioDuration > 0 && <p className={`mt-4 text-center text-[10px] ${audioDuration >= MIN_AUDIO_SECONDS ? 'text-nolan-green' : 'text-yellow-200'}`}>{audioDuration >= MIN_AUDIO_SECONDS ? '✓ Audio master clears the 60-second minimum' : 'This take is under one minute — Nolan will extend the master before delivery.'}</p>}
                 {!seriesPlan && <button onClick={doRetryAudio} disabled={busy}
                   className="mt-2 w-full py-2 text-xs text-nolan-muted hover:text-white disabled:opacity-40 flex items-center justify-center gap-2">
                   <RefreshCw className="w-3.5 h-3.5" /> Make a new audio version
                 </button>}
               </div>
-              <div className="glass rounded-xl p-4 mt-3 border border-pink-400/25">
-                <div className="flex items-center gap-2 mb-2"><Film className="w-4 h-4 text-pink-300" /><span className="text-xs font-bold tracking-wider text-pink-200">Episode cover</span></div>
-                <p className="text-[11px] text-nolan-muted mb-3">Create a story-led cover. Your photos, places, and clips can stay as original media in the visual plan.</p>
+              </div>
+              <div className="glass rounded-xl p-4 mt-3 border border-nolan-accent/30">
+                <div className="flex items-center justify-between gap-2 mb-2"><div className="flex items-center gap-2"><Film className="w-4 h-4 text-nolan-accent" /><span className="text-xs font-bold tracking-wider text-white">Cinematic poster</span></div><span className="rounded-full bg-nolan-accent/10 px-2 py-1 text-[9px] text-nolan-accent">AI directed</span></div>
+                <p className="text-[11px] text-nolan-muted mb-3">A compact poster built from this episode’s intent, title, cast, and atmosphere. Add one reference image if you want to steer its mood and composition.</p>
+                <div className="rounded-lg border border-nolan-border/70 bg-black/15 p-3 mb-3">
+                  <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-semibold text-white">Optional image reference</p><p className="mt-1 text-[10px] text-nolan-muted">JPG, PNG, or WEBP · under 5 MB · used only for this poster.</p></div><span className={`text-[10px] ${posterReferenceSaved ? 'text-nolan-green' : 'text-nolan-muted'}`}>{posterReferenceSaved ? 'Reference ready' : 'Optional'}</span></div>
+                  <div className="mt-3 flex flex-col sm:flex-row gap-2">
+                    <label className="flex-1 rounded-lg border border-dashed border-nolan-border px-3 py-2 text-[11px] text-nolan-muted cursor-pointer hover:border-nolan-accent/70"><Upload className="w-3 h-3 inline mr-1.5" />{posterReferenceFile?.name || 'Choose image'}<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" disabled={coverGenerating || busy} onChange={event => { setPosterReferenceFile(event.target.files?.[0] || null); setPosterReferenceError('') }} /></label>
+                    <button type="button" onClick={doSavePosterReference} disabled={coverGenerating || busy || !posterReferenceFile || !posterReferenceConsent} className="rounded-lg border border-nolan-accent/50 px-3 py-2 text-[11px] font-semibold text-nolan-accent disabled:opacity-40">Save reference</button>
+                  </div>
+                  <label className="mt-2 flex gap-2 text-[10px] text-nolan-muted"><input type="checkbox" checked={posterReferenceConsent} disabled={coverGenerating || busy} onChange={event => setPosterReferenceConsent(event.target.checked)} />I own this image or have permission to use it for this poster.</label>
+                  {posterReferenceError && <p className="mt-2 text-[10px] text-red-300">{posterReferenceError}</p>}
+                </div>
+                <label className="block mb-3"><span className="text-[11px] font-semibold text-white">Poster direction</span><span className="block mt-1 text-[10px] text-nolan-muted">Edit the cinematic prompt. It is sent with this episode’s story and your uploaded image reference.</span><textarea value={posterPrompt} onChange={event => setPosterPrompt(event.target.value)} rows={3} placeholder={`A cinematic ${dna?.genre?.[0] || 'thriller'} backdrop: the protagonist framed against the story's central symbol, practical blue light, bold negative space.`} className="mt-2 w-full resize-none rounded-lg border border-nolan-border bg-nolan-surface/70 p-2 text-xs text-white placeholder:text-nolan-muted/50 focus:border-nolan-accent focus:outline-none" /></label>
                 <button onClick={doGenerateCover} disabled={coverGenerating || busy}
-                  className="w-full py-2 rounded-lg border border-pink-300/50 text-pink-200 text-xs flex items-center justify-center gap-2 disabled:opacity-40">
+                  className="w-full py-2 rounded-lg bg-nolan-accent text-white text-xs font-semibold flex items-center justify-center gap-2 disabled:opacity-40">
                   {coverGenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
                   {coverGenerating ? 'Creating cover…' : coverImageUrl ? 'Make a new cover' : 'Create episode cover'}
                 </button>
                 {coverError && <p className="text-[10px] text-red-300 mt-2">{coverError}</p>}
                 {coverImageUrl && (
-                  <div className="relative aspect-[2/3] overflow-hidden rounded-lg border border-pink-300/30 mt-3 bg-black/20">
+                  <div className="poster-frame relative aspect-[2/3] w-full max-w-[220px] overflow-hidden rounded-lg border border-nolan-accent/30 mt-3 mx-auto bg-black/20">
                     <img src={coverImageUrl} alt="Generated episode cover" className="h-full w-full object-cover" />
+                    <div className="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/90 via-black/15 to-transparent p-4">
+                      <span className="text-[9px] uppercase tracking-[0.28em] text-nolan-accent">Nolan Original</span>
+                      <h3 className="mt-2 text-xl font-bold leading-tight text-white">{posterTitle}</h3>
+                      <p className="mt-2 text-[9px] uppercase tracking-[0.16em] text-white/80">Starring {posterCast.slice(0, 3).join(' · ')}</p>
+                      <p className="mt-1 text-[9px] uppercase tracking-[0.2em] text-nolan-accent">Directed by Nolan</p>
+                    </div>
                     <span className="absolute bottom-2 left-2 rounded-full bg-black/60 px-2 py-1 text-[9px] text-white">
                       {coverIsFallback ? 'Story cover' : 'AI-generated cover'}
                     </span>
                   </div>
                 )}
-                <details open className="mt-3 border-t border-pink-300/15 pt-3">
-                  <summary className="cursor-pointer text-[10px] text-pink-200">Video for this episode</summary>
-                  <div className="mt-3">
-                    {seriesPlan ? (
-                      <p className="mb-3 text-[10px] leading-4 text-nolan-muted">Your uploaded pictures, places, and clips are matched to this episode's audio story. Make a video teaser only when you want one.</p>
-                    ) : <>
-                      <input className="block w-full text-[10px] mb-2" type="file" accept="image/*" onChange={e => setPortraitFile(e.target.files?.[0] || null)} />
-                      <input className="block w-full text-[10px] mb-3" type="file" accept="video/*" onChange={e => setLiveVideoFile(e.target.files?.[0] || null)} />
-                      <label className="flex items-start gap-2 text-[10px] text-nolan-muted mb-3">
-                        <input type="checkbox" checked={visualConsent} onChange={e => setVisualConsent(e.target.checked)} className="mt-0.5" />
-                        I own these files or have permission to use them, and I consent to Nolan using them in this edit.
-                      </label>
-                    </>}
-                    <button onClick={doPlanVisualEpisode} disabled={busy} className="w-full py-2 rounded-lg border border-pink-300/50 text-pink-200 text-xs flex justify-center gap-2"><Upload className="w-3 h-3" />Plan visual version</button>
-                    {visualError && <p className="text-[10px] text-red-300 mt-2">{visualError}</p>}
-                    {visualPlan && <p className="text-[10px] text-pink-200 mt-2">✓ {visualPlan.beats?.length} visual moments planned for {visualPlan.target_duration_seconds}s</p>}
-                    {visualPlan && (
-                      <button onClick={doRenderVideoTeaser} disabled={busy || visualResult?.status === 'rendering'} className="mt-2 w-full py-2 rounded-lg bg-pink-300/90 text-slate-950 text-xs font-semibold flex justify-center gap-2 disabled:opacity-40">
+                <div className="mt-3 border-t border-pink-300/15 pt-3">
+                  {seriesFormat === 'audio' ? (
+                    <p className="text-[10px] leading-4 text-nolan-muted">Audio series keeps this as album artwork only. Your episode remains audio-first — no clips, images, or video render controls.</p>
+                  ) : (
+                    <>
+                      <p className="text-[10px] leading-4 text-nolan-muted">Your two saved source videos are cut to the exact audio master length. The video control stays locked until both videos and the audio are ready.</p>
+                      {visualPlan && <p className="text-[10px] text-pink-200 mt-2">✓ {visualPlan.beats?.length} visual moments planned for {visualPlan.target_duration_seconds}s</p>}
+                      {!visualPlan && <button onClick={doPlanVisualEpisode} disabled={busy || !videoSourcesSaved} className="mt-3 w-full py-2 rounded-lg border border-pink-300/50 text-pink-200 text-xs flex justify-center gap-2 disabled:opacity-40"><Upload className="w-3 h-3" />Plan video cut</button>}
+                      {visualPlan && <button onClick={doRenderVideoTeaser} disabled={busy || visualResult?.status === 'rendering'} className="mt-3 w-full py-2 rounded-lg bg-pink-300/90 text-slate-950 text-xs font-semibold flex justify-center gap-2 disabled:opacity-40">
                         {visualResult?.status === 'rendering' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Film className="w-3 h-3" />}
-                        {visualResult?.status === 'rendering' ? 'Making your teaser…' : 'Make a 20-second video teaser'}
-                      </button>
-                    )}
-                    {visualResult?.message && <p className={`text-[10px] mt-2 ${visualResult.status === 'failed' ? 'text-red-300' : 'text-pink-200'}`}>{visualResult.message}</p>}
-                    {visualResult?.url && (
-                      <video controls className="mt-3 w-full rounded-lg border border-pink-300/30" src={api.absoluteUrl(visualResult.url)}>
-                        Your browser cannot play this teaser.
-                      </video>
-                    )}
-                  </div>
-                </details>
+                        {visualResult?.status === 'rendering' ? 'Building your video…' : visualResult?.status === 'ready' ? 'Rebuild video cut' : 'Build video cut'}
+                      </button>}
+                      {visualError && <p className="text-[10px] text-red-300 mt-2">{visualError}</p>}
+                      {visualResult?.message && <p className={`text-[10px] mt-2 ${visualResult.status === 'failed' ? 'text-red-300' : 'text-pink-200'}`}>{visualResult.message}</p>}
+                      {visualResult?.url && <video controls className="mt-3 w-full rounded-lg border border-pink-300/30" src={api.absoluteUrl(visualResult.url)}>Your browser cannot play this episode video.</video>}
+                    </>
+                  )}
+                </div>
               </div>
               {/* Stats */}
               <div className="grid grid-cols-2 gap-3 mt-3">
@@ -1503,25 +1790,27 @@ export default function SessionPage() {
               </button>
             </div>
           )}
-        </div>
+        </main>
 
-        {/* Advanced controls stay out of the first-time creator flow. */}
-        <details className="lg:col-span-2 border-l border-nolan-border/50 group">
-          <summary className="cursor-pointer list-none px-5 py-4 text-xs text-nolan-muted hover:text-white flex items-center gap-2">
-            <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90" />
-            Behind the scenes
-          </summary>
-          <div className="flex flex-col border-t border-nolan-border/30">
+        <AnimatePresence>
+          {jarvisOpen && (
+            <>
+              <motion.button type="button" aria-label="Close Jarvis" onClick={() => setJarvisOpen(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-40 bg-[#020814]/65 backdrop-blur-sm" />
+              <motion.aside initial={{ x: -420, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -420, opacity: 0 }} transition={{ type: 'spring', stiffness: 280, damping: 28 }} className="jarvis-drawer fixed inset-y-0 left-0 z-50 flex w-full max-w-md flex-col border-r border-nolan-accent/30 bg-nolan-bg/95 shadow-2xl backdrop-blur-2xl">
+                <div className="flex items-center gap-3 border-b border-nolan-border/60 px-5 py-4">
+                  <span className="jarvis-core"><Bot className="w-5 h-5" /></span>
+                  <div className="min-w-0"><p className="text-xs font-bold tracking-[0.18em] text-white">JARVIS</p><p className="truncate text-[10px] text-nolan-muted">{studioUpdate.role} · {studioUpdate.text}</p></div>
+                  <button type="button" onClick={() => setJarvisOpen(false)} className="ml-auto rounded-full p-2 text-nolan-muted hover:bg-white/5 hover:text-white" aria-label="Close Jarvis"><X className="w-4 h-4" /></button>
+                </div>
 
-          {/* Terminal */}
-          <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
+                <div className="mx-5 mt-4 rounded-xl border border-nolan-accent/20 bg-nolan-accent/5 p-3">
+                  <div className="flex items-center gap-2"><CircleDot className={`w-3.5 h-3.5 ${busy ? 'animate-pulse text-nolan-accent' : 'text-nolan-green'}`} /><span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-nolan-accent">{busy ? 'Live orchestration' : 'Studio ready'}</span></div>
+                  <p className="mt-1 text-[11px] leading-5 text-nolan-muted">Jarvis keeps the workflow visible while you stay focused on creating.</p>
+                </div>
+
+          <div className="mt-4 flex min-h-0 flex-1 flex-col">
             <div className="flex items-center gap-2 px-4 py-2.5 border-b border-nolan-border/50">
-              <span className="flex gap-1">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-500/70" />
-                <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/70" />
-                <span className="w-2.5 h-2.5 rounded-full bg-green-500/70" />
-              </span>
-              <span className="text-xs text-nolan-muted ml-1 tracking-widest">STORY UPDATES</span>
+              <span className="text-xs text-nolan-muted tracking-widest">STORY UPDATES</span>
               {busy && <span className="ml-auto flex items-center gap-1 text-xs text-nolan-accent">
                 <span className="w-1.5 h-1.5 rounded-full bg-nolan-accent animate-pulse" /> LIVE
               </span>}
@@ -1540,8 +1829,6 @@ export default function SessionPage() {
             </div>
           </div>
 
-          {/* Older one-shot revisions stay available for existing pilots. Series
-              feedback is intentionally kept next to the episode it changes. */}
           {!seriesPlan && <div className="border-t border-nolan-border/50 p-4">
             <div className="flex items-center gap-2 mb-3">
               <Lock className="w-4 h-4 text-nolan-gold" />
@@ -1557,7 +1844,7 @@ export default function SessionPage() {
               rows={2}
               className="w-full bg-nolan-surface border border-nolan-border/70 rounded-lg p-2.5 text-xs text-nolan-text placeholder:text-nolan-muted/40 resize-none focus:outline-none focus:border-nolan-gold transition-colors"
             />
-            <button onClick={doRevise} disabled={busy || !scriptReady || !revise.trim()}
+            <button onClick={() => void doRevise()} disabled={busy || !scriptReady || !revise.trim()}
               className="mt-2 w-full py-2 border border-nolan-gold/60 text-nolan-gold rounded-lg text-xs font-semibold hover:bg-nolan-gold/10 disabled:opacity-30 transition-all flex items-center justify-center gap-2">
               <RefreshCw className="w-3 h-3" /> Update my story
             </button>
@@ -1578,8 +1865,10 @@ export default function SessionPage() {
               )}
             </AnimatePresence>
           </div>}
-          </div>
-        </details>
+              </motion.aside>
+            </>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   )
@@ -1652,6 +1941,21 @@ function EpisodeStatusPill({ status }: { status: EpisodeStatus }) {
   return <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-medium ${colors[status]}`}>{labels[status]}</span>
 }
 
+function ScreenplayPaper({ script, editing, busy, error, onEdit, onCancel, onChange, onSave, compact = false }: {
+  script: ProductionScript; editing: boolean; busy: boolean; error: string; compact?: boolean
+  onEdit: () => void; onCancel: () => void; onChange: (script: ProductionScript) => void; onSave: () => void
+}) {
+  const updateLine = (index: number, field: keyof ScriptLine, value: string) => onChange({ ...script, lines: script.lines.map((line, i) => i === index ? { ...line, [field]: field === 'duration_seconds' ? Number(value) || 0 : value } : line) })
+  return <div className={`screenplay-paper ${compact ? 'xl:mt-2' : 'mt-2'} rounded-xl p-5`}>
+    <div className="mb-4 flex items-start justify-between gap-3 border-b border-amber-950/20 pb-3"><div><p className="screenplay-kicker">NOLAN · SHOOTING DRAFT</p><h3 className="mt-1 font-serif text-lg font-bold text-stone-900">{script.title}</h3><p className="mt-1 text-[10px] text-stone-600">Dialogue · pauses · SFX — the exact audio blueprint.</p></div>{!editing ? <button onClick={onEdit} disabled={busy} className="rounded border border-stone-700 px-2 py-1 text-[10px] font-semibold text-stone-800 disabled:opacity-40">Edit script</button> : <div className="flex gap-2"><button onClick={onCancel} disabled={busy} className="text-[10px] text-stone-600">Cancel</button><button onClick={onSave} disabled={busy} className="rounded bg-stone-900 px-2 py-1 text-[10px] font-semibold text-amber-50 disabled:opacity-40">{busy ? 'Saving…' : 'Save'}</button></div>}</div>
+    <div className="max-h-[460px] space-y-3 overflow-y-auto pr-1">{script.lines.map((line, index) => {
+      const cue = line.type === 'dialogue' ? line.text || '' : line.description || line.text || ''
+      if (editing) return <div key={index} className="rounded border border-amber-950/20 bg-amber-50/60 p-2"><div className="flex gap-2"><select value={line.type} onChange={e => updateLine(index, 'type', e.target.value)} className="w-24 bg-transparent text-[10px] text-stone-700"><option value="dialogue">Dialogue</option><option value="sfx">SFX</option><option value="ambience">Ambience</option><option value="music">Music</option><option value="silence">Silence</option></select>{line.type === 'dialogue' && <input value={line.character || ''} onChange={e => updateLine(index, 'character', e.target.value)} placeholder="Character" className="min-w-0 flex-1 bg-transparent text-[10px] font-bold uppercase text-stone-800 outline-none" />}</div><textarea value={cue} onChange={e => updateLine(index, line.type === 'dialogue' ? 'text' : 'description', e.target.value)} rows={2} className="mt-1 w-full resize-none bg-transparent text-xs leading-5 text-stone-800 outline-none" />{line.type === 'silence' && <input type="number" value={line.duration_seconds || 0} onChange={e => updateLine(index, 'duration_seconds', e.target.value)} className="w-16 bg-transparent text-[10px] text-stone-700 outline-none" />}</div>
+      if (line.type === 'dialogue') return <div key={index} className="pl-8"><p className="text-[10px] font-bold uppercase tracking-[0.13em] text-stone-800">{line.character || 'NARRATOR'} {line.emotion ? `(${line.emotion})` : ''}</p><p className="mt-1 font-serif text-sm leading-6 text-stone-900">{cue}</p></div>
+      return <p key={index} className="text-[10px] font-semibold uppercase tracking-[0.08em] text-stone-600">[{line.type}{cue ? ` — ${cue}` : ''}{line.duration_seconds ? ` · ${line.duration_seconds}s` : ''}]</p>
+    })}</div>{error && <p className="mt-3 text-[10px] text-red-700">{error}</p>}</div>
+}
+
 function VisionCard({ vision, selected, onSelect }:
   { vision: Vision; selected: boolean; onSelect: () => void }) {
   const [open, setOpen] = useState(false)
@@ -1699,7 +2003,19 @@ function VisionCard({ vision, selected, onSelect }:
   )
 }
 
-function ConstitutionRow({ check }: { check: Check }) {
+function ConstitutionPendingRow({ rule }: { rule: { rule_number: number; rule: string } }) {
+  return (
+    <div className="rounded-lg px-3 py-2 bg-black/10 border border-nolan-border/40">
+      <div className="flex items-center gap-2">
+        <Loader2 className="w-3.5 h-3.5 text-nolan-muted animate-spin flex-shrink-0" />
+        <span className="text-xs text-nolan-text/70 flex-1">Story check {rule.rule_number}: {rule.rule}</span>
+        <span className="text-[10px] text-nolan-muted">Waiting for supervisor</span>
+      </div>
+    </div>
+  )
+}
+
+function ConstitutionRow({ check, onRepair, disabled }: { check: Check; onRepair?: (check: Check) => void; disabled?: boolean }) {
   const [open, setOpen] = useState(!check.passed)
   return (
     <div className={`rounded-lg px-3 py-2 transition-all ${check.passed ? 'bg-nolan-green/5' : 'bg-nolan-red/8 border border-nolan-red/20'}`}>
@@ -1715,6 +2031,8 @@ function ConstitutionRow({ check }: { check: Check }) {
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}>
             {check.evidence && <p className="text-[11px] text-nolan-muted mt-1 pl-5">What Nolan found: {check.evidence.slice(0, 120)}</p>}
             {check.repair  && <p className="text-[11px] text-nolan-green mt-1 pl-5">↳ Try this: {check.repair.slice(0, 120)}</p>}
+            {check.repair && onRepair && <button type="button" onClick={event => { event.stopPropagation(); void onRepair(check) }} disabled={disabled}
+              className="mt-2 ml-5 rounded-md border border-nolan-green/40 px-2.5 py-1 text-[10px] font-semibold text-nolan-green hover:bg-nolan-green/10 disabled:opacity-40"><Wand2 className="w-3 h-3 inline mr-1" />Apply repair</button>}
           </motion.div>
         )}
       </AnimatePresence>

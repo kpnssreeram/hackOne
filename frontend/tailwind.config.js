@@ -5,16 +5,16 @@ module.exports = {
     extend: {
       colors: {
         nolan: {
-          bg:      '#070710',
-          surface: '#0e0e1c',
-          card:    '#13132a',
-          border:  '#1e1e3f',
-          accent:  '#6c47ff',
+          bg:      '#07111f',
+          surface: '#0c1a2d',
+          card:    '#10233d',
+          border:  '#24405f',
+          accent:  '#35b8ff',
           gold:    '#f5c542',
           red:     '#ff4d6d',
-          green:   '#00d68f',
-          text:    '#e2e2f0',
-          muted:   '#6b6b8a',
+          green:   '#50d5a5',
+          text:    '#edf6ff',
+          muted:   '#91a4ba',
         },
       },
       fontFamily: {

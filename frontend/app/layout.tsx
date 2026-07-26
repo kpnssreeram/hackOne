@@ -2,8 +2,8 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Nolan — Imagination to Audio',
-  description: 'One breath in. One binge-worthy episode out.',
+  title: 'Nolan — Story Series Studio',
+  description: 'One idea in. One cinematic audio or video series out.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

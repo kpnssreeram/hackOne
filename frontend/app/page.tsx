@@ -136,7 +136,7 @@ export default function Home() {
           Tell Nolan a dream, a memory, or one messy thought.
         </p>
         <p className="text-nolan-accent text-sm font-medium mt-1">
-          We’ll find the characters, the feeling, and the episode hiding inside it.
+          We’ll find the characters, the feeling, and the series hiding inside it.
         </p>
       </motion.div>
 
@@ -243,7 +243,7 @@ export default function Home() {
         </AnimatePresence>
 
         <label className="block mt-4 text-xs text-nolan-muted">
-          Story and audio language
+          Story language and voice direction
           <select value={outputLanguage} onChange={e => setOutputLanguage(e.target.value)} disabled={loading}
             className="mt-1 w-full bg-nolan-surface border border-nolan-border rounded-lg px-3 py-2 text-sm text-nolan-text focus:outline-none focus:border-nolan-accent">
             {LANGUAGE_OPTIONS.map(language => <option key={language.value} value={language.value}>{language.label}</option>)}
@@ -258,7 +258,7 @@ export default function Home() {
         transition={{ delay: 0.4 }}
         className="mt-10 flex items-center gap-3 text-xs text-nolan-muted"
       >
-        {['Your idea', 'Meet the story', 'Choose a feeling', 'First episode'].map((step, i, arr) => (
+        {['Your idea', 'Meet the story', 'Choose a format', 'Make the series'].map((step, i, arr) => (
           <span key={step} className="flex items-center gap-3">
             <span className="text-center">
               <span className="block w-6 h-6 rounded-full bg-nolan-surface border border-nolan-border text-nolan-muted text-[10px] flex items-center justify-center mx-auto mb-1">{i + 1}</span>

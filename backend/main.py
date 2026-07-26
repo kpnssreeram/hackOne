@@ -3,7 +3,7 @@ Nolan — FastAPI backend
 All endpoints, SSE streaming, file serving.
 """
 from __future__ import annotations
-import asyncio, json, os, uuid, io
+import asyncio, json, os, uuid, io, shutil, subprocess
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,6 +20,7 @@ load_dotenv()
 from schemas import (
     Session, WorkflowStatus, CreativeDNA, VisionSelection,
     ChangeRequest, EpisodeFeedback, EpisodeStatus, VoiceCameoConsent,
+    ConstitutionRepairBody, ProductionScript,
     SessionPreferences, VisualAsset,
 )
 from workflow import (
@@ -28,6 +29,7 @@ from workflow import (
     run_confirmed_episode_render, run_continue_series, run_episode_draft,
     run_episode_revision, run_produce_workflow, run_revision_workflow,
     run_series_outline, run_audio_render,
+    apply_constitution_repair_to_script, _clear_episode_media, _sync_legacy_episode_fields,
     SESSIONS_DIR, emit,
 )
 from agents.voice_cameo import VoiceClonePlanRequired, clone_voice, preview_cameo, delete_cameo
@@ -47,6 +49,7 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 AUDIO_DIR = SESSIONS_DIR
 VISUAL_ASSET_NAMES = {"portrait", "live_video"}
 VISUAL_ASSET_KINDS = {"photo", "video", "place_reference"}
+SERIES_VIDEO_SLOTS = {"video_1", "video_2"}
 IMAGE_MEDIA_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 VIDEO_MEDIA_SUFFIXES = {".mp4", ".webm", ".mov"}
 IN_FLIGHT_STATUSES = {
@@ -84,6 +87,123 @@ def _safe_media_suffix(filename: str | None, *, image: bool) -> str:
         allowed_names = "JPG, PNG, or WEBP" if image else "MP4, WEBM, or MOV"
         raise HTTPException(422, f"Use a supported {allowed_names} file")
     return suffix or (".jpg" if image else ".mp4")
+
+
+def _series_video_assets(session: Session) -> list[VisualAsset]:
+    """Return the two explicitly uploaded source videos, in slot order."""
+    return [
+        next(
+            (
+                asset for asset in session.visual_assets
+                if asset.kind == "video" and asset.consented and asset.filename.startswith(f"series-{slot}-")
+            ),
+            None,
+        )
+        for slot in ("video_1", "video_2")
+    ]
+
+
+def _has_two_series_videos(session: Session) -> bool:
+    return all(_series_video_assets(session))
+
+
+def _ffmpeg_path() -> str | None:
+    path = shutil.which("ffmpeg")
+    if path:
+        return path
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
+def _prepared_place_reference(session_id: str, assets: list[VisualAsset], episode_number: int | None) -> Path | None:
+    """Make a portrait location image legal for Sora's 720x1280 input frame."""
+    asset = next((item for item in assets if item.kind == "place_reference" and item.consented), None)
+    if not asset:
+        return None
+    source = SESSIONS_DIR / session_id / "visual" / asset.filename
+    ffmpeg = _ffmpeg_path()
+    if not source.exists() or not ffmpeg:
+        return None
+    target = SESSIONS_DIR / session_id / "visual" / f"episode-{episode_number or 1}-reference.jpg"
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", str(source), "-vf", "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280", "-frames:v", "1", str(target)],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return target if target.exists() else None
+    except Exception as exc:
+        log.warning("Could not prepare place reference: %s", exc)
+        return None
+
+
+def _compose_episode_video(session_id: str, episode, scene_path: Path) -> Path | None:
+    """Deliver one playable episode: generated scene on video, Nolan mix on audio."""
+    if not episode or not episode.audio_url:
+        return None
+    ffmpeg = _ffmpeg_path()
+    audio_path = SESSIONS_DIR / session_id / "audio" / Path(episode.audio_url).name
+    if not ffmpeg or not scene_path.exists() or not audio_path.exists():
+        return None
+    output = SESSIONS_DIR / session_id / "visual" / f"episode-{episode.number}.mp4"
+    try:
+        subprocess.run(
+            [
+                ffmpeg, "-y", "-stream_loop", "-1", "-i", str(scene_path), "-i", str(audio_path),
+                "-map", "0:v:0", "-map", "1:a:0", "-shortest", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-movflags", "+faststart", str(output),
+            ],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return output if output.exists() else None
+    except Exception as exc:
+        log.warning("Could not compose episode video: %s", exc)
+        return None
+
+
+def _compose_uploaded_video_episode(session_id: str, episode) -> Path | None:
+    """Cut the two required creator videos into one audio-length episode."""
+    if not episode or not episode.audio_url:
+        return None
+    ffmpeg = _ffmpeg_path()
+    session = load_session(session_id)
+    if not session:
+        return None
+    assets = _series_video_assets(session)
+    paths = [SESSIONS_DIR / session_id / "visual" / asset.filename for asset in assets]
+    audio_path = SESSIONS_DIR / session_id / "audio" / Path(episode.audio_url).name
+    if not ffmpeg or len(paths) != 2 or not all(path.exists() for path in paths) or not audio_path.exists():
+        return None
+    output = SESSIONS_DIR / session_id / "visual" / f"episode-{episode.number}.mp4"
+    try:
+        from audio_mixer import _decode_mp3
+        duration = max(60.0, len(_decode_mp3(audio_path)) / 1000)
+    except Exception:
+        duration = max(60.0, float(episode.actual_duration_seconds or 90))
+    first_half = round(duration / 2, 3)
+    second_half = round(duration - first_half, 3)
+    scale = "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,format=yuv420p"
+    try:
+        subprocess.run(
+            [
+                ffmpeg, "-y", "-stream_loop", "-1", "-i", str(paths[0]),
+                "-stream_loop", "-1", "-i", str(paths[1]), "-i", str(audio_path),
+                "-filter_complex",
+                f"[0:v]{scale},trim=duration={first_half},setpts=PTS-STARTPTS[v0];"
+                f"[1:v]{scale},trim=duration={second_half},setpts=PTS-STARTPTS[v1];"
+                "[v0][v1]concat=n=2:v=1:a=0[v]",
+                "-map", "[v]", "-map", "2:a:0", "-t", str(duration),
+                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-movflags", "+faststart", str(output),
+            ],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return output if output.exists() else None
+    except Exception as exc:
+        log.warning("Could not compose uploaded video episode: %s", exc)
+        return None
 
 
 @asynccontextmanager
@@ -242,6 +362,14 @@ class EpisodeFeedbackBody(BaseModel):
     feedback: EpisodeFeedback
 
 
+class EpisodeScriptBody(BaseModel):
+    production_script: ProductionScript
+
+
+class CoverImageBody(BaseModel):
+    poster_prompt: str = Field(default="", max_length=2000)
+
+
 def _series_episode(session: Session, episode_number: int):
     return next((episode for episode in session.episodes if episode.number == episode_number), None)
 
@@ -310,6 +438,8 @@ async def confirm_episode(session_id: str, episode_number: int, background_tasks
         raise HTTPException(404, "Episode not found")
     if episode.status != EpisodeStatus.DRAFT_READY or not episode.production_script:
         raise HTTPException(409, "Review the episode draft before creating its audio")
+    if s.preferences.output_mode == "video" and not _has_two_series_videos(s):
+        raise HTTPException(409, "Video series requires both source videos before an episode can be generated")
     if s.status in IN_FLIGHT_STATUSES:
         raise HTTPException(409, "This story task is already in progress")
     episode.status = EpisodeStatus.RENDERING
@@ -357,6 +487,86 @@ async def episode_feedback(
         background_tasks.add_task(run_continue_series, session_id, episode_number, body.feedback)
         return {"status": "continuing", "episode_number": episode_number}
     raise HTTPException(422, "action must be revise or continue")
+
+
+@app.post("/api/sessions/{session_id}/episodes/{episode_number}/constitution-repair")
+async def constitution_repair(
+    session_id: str,
+    episode_number: int,
+    body: ConstitutionRepairBody,
+):
+    """Apply a Constitution suggestion immediately, without a model revision pass."""
+    s = load_session(session_id)
+    episode = _series_episode(s, episode_number) if s else None
+    if not s or not episode:
+        raise HTTPException(404, "Episode not found")
+    if not episode.production_script or not episode.constitution_report:
+        raise HTTPException(409, "Draft and check this episode before applying a repair")
+    if s.status in IN_FLIGHT_STATUSES:
+        raise HTTPException(409, "This story task is already in progress")
+    if any(
+        future.number > episode_number and future.status == EpisodeStatus.APPROVED
+        for future in s.episodes
+    ):
+        raise HTTPException(409, "Revise the latest approved episode to preserve story continuity")
+
+    check = next((item for item in episode.constitution_report.checks if item.rule_number == body.rule_number), None)
+    if not check:
+        raise HTTPException(404, "Constitution rule not found")
+    if check.passed:
+        return {"status": "already_fixed", "episode": episode.model_dump()}
+
+    episode.production_script = apply_constitution_repair_to_script(episode.production_script, body.repair)
+    repaired_checks = [
+        item.model_copy(update={
+            "passed": True,
+            "evidence": f"Applied repair: {body.repair[:240]}",
+            "reason": None,
+            "repair": None,
+        }) if item.rule_number == body.rule_number else item
+        for item in episode.constitution_report.checks
+    ]
+    passed_count = sum(1 for item in repaired_checks if item.passed)
+    episode.constitution_report = episode.constitution_report.model_copy(update={
+        "checks": repaired_checks,
+        "overall_score": round(passed_count / max(1, len(repaired_checks)) * 100),
+        "repaired_script_patch": body.repair,
+    })
+    # Keep an already generated audio file available for immediate playback;
+    # the repaired script is visible now and can be rendered as a new take later.
+    s.active_episode_number = episode_number
+    update_status(s, WorkflowStatus.READY if episode.audio_url else WorkflowStatus.CONSTITUTION_DONE)
+    await emit(session_id, "supervisor", "artifact", {"episode": episode.model_dump()})
+    await emit(session_id, "supervisor", "repair", {
+        "episode_number": episode_number,
+        "rule_number": body.rule_number,
+        "message": f"Rule {body.rule_number} repaired immediately.",
+    })
+    return {"status": "repaired", "episode": episode.model_dump()}
+
+
+@app.put("/api/sessions/{session_id}/episodes/{episode_number}/script")
+async def update_episode_script(session_id: str, episode_number: int, body: EpisodeScriptBody):
+    """Save the creator's screenplay edits; the next render uses these exact cues."""
+    s = load_session(session_id)
+    episode = _series_episode(s, episode_number) if s else None
+    if not s or not episode:
+        raise HTTPException(404, "Episode not found")
+    if s.status in IN_FLIGHT_STATUSES:
+        raise HTTPException(409, "A story task is already in progress")
+    if any(item.number > episode_number and item.status == EpisodeStatus.APPROVED for item in s.episodes):
+        raise HTTPException(409, "Edit the latest approved episode to preserve story continuity")
+    if not body.production_script.lines:
+        raise HTTPException(422, "A screenplay needs at least one line")
+
+    episode.production_script = body.production_script
+    _clear_episode_media(episode)
+    episode.status = EpisodeStatus.DRAFT_READY
+    _sync_legacy_episode_fields(s, episode)
+    update_status(s, WorkflowStatus.CONSTITUTION_DONE)
+    save_session(s)
+    await emit(session_id, "writer", "artifact", {"episode": episode.model_dump()})
+    return {"status": "script_updated", "episode": episode.model_dump()}
 
 @app.post("/api/sessions/{session_id}/produce")
 async def produce(session_id: str, body: SelectionBody, background_tasks: BackgroundTasks):
@@ -547,7 +757,7 @@ async def delete_voice_cameo(session_id: str):
 # ─── Visual Episode ──────────────────────────────────────────────────────────
 
 @app.post("/api/sessions/{session_id}/cover-image")
-async def create_cover_image(session_id: str, episode_number: int | None = None):
+async def create_cover_image(session_id: str, body: CoverImageBody | None = None, episode_number: int | None = None):
     """Create one story-led cover; image-provider failures fall back to SVG."""
     session_id = _validated_session_id(session_id)
     s = load_session(session_id)
@@ -561,25 +771,132 @@ async def create_cover_image(session_id: str, episode_number: int | None = None)
     if not s.creative_dna or not script:
         raise HTTPException(409, "Generate the approved production script before creating a cover")
 
-    image_bytes = await generate_episode_cover(s.creative_dna, script)
+    poster_reference = next(
+        (asset for asset in reversed(s.visual_assets)
+         if asset.kind == "photo" and asset.consented and asset.filename.startswith("poster-reference-")),
+        None,
+    )
+    reference_path = SESSIONS_DIR / session_id / "visual" / poster_reference.filename if poster_reference else None
+    poster_prompt = (body.poster_prompt if body else "").strip()
+    image_bytes = await generate_episode_cover(s.creative_dna, script, reference_path, poster_prompt)
     stem = f"episode-{active_episode.number}-cover" if active_episode else "episode-cover"
-    filename = f"{stem}.png" if image_bytes else f"{stem}.svg"
-    content = image_bytes or fallback_cover_svg(s.creative_dna, script)
+    # If the image model is unavailable, retain the creator's actual image as
+    # the backdrop instead of replacing it with a generic illustration. The UI
+    # supplies the cinematic title and credits over that authored backdrop.
+    using_reference_backdrop = not image_bytes and bool(reference_path and reference_path.exists())
+    suffix = reference_path.suffix.lower() if using_reference_backdrop and reference_path else ".png" if image_bytes else ".svg"
+    filename = f"{stem}{suffix}"
+    content = image_bytes or (reference_path.read_bytes() if using_reference_backdrop and reference_path else fallback_cover_svg(s.creative_dna, script))
     destination = SESSIONS_DIR / session_id / "visual" / filename
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(content)
 
     url = f"/media/{session_id}/{filename}"
     s.cover_image_url = url
+    s.poster_prompt = poster_prompt
     if active_episode:
         s.active_episode_number = active_episode.number
         active_episode.cover_image_url = url
+        active_episode.poster_prompt = poster_prompt
     save_session(s)
     await emit(session_id, "visual_director", "artifact", {
         "cover_image_url": url,
-        "generated": bool(image_bytes),
+        "generated": bool(image_bytes), "reference_backdrop": using_reference_backdrop,
     })
-    return {"url": url, "generated": bool(image_bytes)}
+    cast = [s.creative_dna.protagonist.name] + [
+        character.name for character in s.creative_dna.characters
+        if character.name != s.creative_dna.protagonist.name
+    ]
+    return {
+        "url": url,
+        "generated": bool(image_bytes),
+        "reference_backdrop": using_reference_backdrop,
+        "metadata": {
+            "title": script.title,
+            "directed_by": "Nolan",
+            "starring": cast,
+        },
+    }
+
+
+@app.post("/api/sessions/{session_id}/poster-reference")
+async def upload_poster_reference(
+    session_id: str,
+    asset: UploadFile = File(...),
+    consent: bool = Form(False),
+):
+    """Store one compact, consented image reference for the next AI poster."""
+    session_id = _validated_session_id(session_id)
+    if not consent:
+        raise HTTPException(400, "Confirm that you own this image and consent to its use for the poster")
+    if not (asset.content_type or "").startswith("image/"):
+        raise HTTPException(422, "Poster reference must be an image")
+    s = load_session(session_id)
+    if not s:
+        raise HTTPException(404, "Session not found")
+    content = await asset.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(413, "Keep poster references under 5 MB")
+
+    asset_id = str(uuid.uuid4())
+    suffix = _safe_media_suffix(asset.filename, image=True)
+    filename = f"poster-reference-{asset_id[:8]}{suffix}"
+    destination = SESSIONS_DIR / session_id / "visual" / filename
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(content)
+    record = VisualAsset(
+        id=asset_id,
+        kind="photo",
+        filename=filename,
+        url=f"/media/{session_id}/{filename}",
+        consented=True,
+    )
+    s.visual_assets = [
+        item for item in s.visual_assets
+        if not (item.kind == "photo" and item.filename.startswith("poster-reference-"))
+    ] + [record]
+    save_session(s)
+    return record.model_dump()
+
+
+@app.post("/api/sessions/{session_id}/series-videos/{slot}")
+async def upload_series_video(
+    session_id: str,
+    slot: str,
+    asset: UploadFile = File(...),
+    consent: bool = Form(False),
+):
+    """Store one of the two required source videos for a video series."""
+    if slot not in SERIES_VIDEO_SLOTS:
+        raise HTTPException(400, "slot must be video_1 or video_2")
+    if not consent:
+        raise HTTPException(400, "Explicit consent is required for uploaded video media")
+    s = load_session(session_id)
+    if not s:
+        raise HTTPException(404, "Session not found")
+    if not (asset.content_type or "").startswith("video/"):
+        raise HTTPException(422, "Both video series sources must be video files")
+
+    suffix = _safe_media_suffix(asset.filename, image=False)
+    asset_id = str(uuid.uuid4())
+    filename = f"series-{slot}-{asset_id[:8]}{suffix}"
+    destination = SESSIONS_DIR / session_id / "visual" / filename
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(await asset.read())
+    # Replacing a slot keeps the series deterministic after a creator changes
+    # one source video and avoids stale media being picked during the edit.
+    s.visual_assets = [
+        item for item in s.visual_assets
+        if not item.filename.startswith(f"series-{slot}-")
+    ] + [VisualAsset(
+        id=asset_id,
+        kind="video",
+        filename=filename,
+        url=f"/media/{session_id}/{filename}",
+        consented=True,
+    )]
+    save_session(s)
+    return {"slot": slot, "stored": True, "filename": filename}
 
 
 @app.post("/api/sessions/{session_id}/visual-assets/{asset_name}")
@@ -670,6 +987,10 @@ async def create_visual_plan(
     episode_number: int | None = None,
 ):
     s = load_session(session_id)
+    if s and s.preferences.output_mode != "video":
+        raise HTTPException(409, "Audio series does not create a visual episode")
+    if s and not _has_two_series_videos(s):
+        raise HTTPException(409, "Upload both source videos before planning the video episode")
     active_number = episode_number or (s.active_episode_number if s else 1)
     active_episode = _series_episode(s, active_number) if s and s.episodes else None
     if episode_number is not None and s and s.episodes and not active_episode:
@@ -677,11 +998,21 @@ async def create_visual_plan(
     script = active_episode.production_script if active_episode else (s.production_script if s else None)
     if not s or not s.creative_dna or not script:
         raise HTTPException(400, "Generate the approved production script before planning visuals")
-    plan = await plan_visual_episode(s.creative_dna, script, s.visual_assets)
-    plan.portrait_consent = portrait_consent or any(asset.kind == "photo" and asset.consented for asset in s.visual_assets)
-    plan.live_video_consent = live_video_consent or any(asset.kind == "video" and asset.consented for asset in s.visual_assets)
+    target_duration = round(active_episode.actual_duration_seconds or script.estimated_duration_seconds or 90)
+    plan = await plan_visual_episode(
+        s.creative_dna,
+        script,
+        _series_video_assets(s),
+        target_duration_seconds=target_duration,
+    )
+    plan.portrait_consent = False
+    plan.live_video_consent = True
     s.visual_episode_plan = plan
-    s.visual_episode = VisualEpisodeResult(status="planned", message="Visual episode is planned. Your clips and photos stay original; place references guide the edit without generating a real person.")
+    s.visual_episode = VisualEpisodeResult(
+        status="planned",
+        message=f"Video plan synced to the {target_duration}-second audio master.",
+        duration_seconds=float(target_duration),
+    )
     if active_episode:
         s.active_episode_number = active_episode.number
         active_episode.visual_episode_plan = plan
@@ -692,21 +1023,23 @@ async def create_visual_plan(
 
 
 async def _finish_video_teaser(session_id: str, episode_number: int | None, video_id: str):
-    """Finish a provider render after the fast API response has returned."""
+    """Finish the generated scene and package it with the episode's real audio."""
     try:
         job, content = await wait_for_video_teaser(video_id)
         s = load_session(session_id)
         if not s:
             return
         episode = _series_episode(s, episode_number) if episode_number and s.episodes else None
-        filename = f"episode-{episode.number}-teaser.mp4" if episode else "story-teaser.mp4"
+        filename = f"episode-{episode.number}-scene.mp4" if episode else "story-scene.mp4"
         destination = SESSIONS_DIR / session_id / "visual" / filename
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)
+        episode_video = _compose_episode_video(session_id, episode, destination)
         result = VisualEpisodeResult(
-            status="ready", url=f"/media/{session_id}/{filename}",
-            message="Your 20-second story teaser is ready.", provider_job_id=video_id,
+            status="ready", url=(f"/media/{session_id}/{episode_video.name}" if episode_video else f"/media/{session_id}/{filename}"),
+            message=("Your full episode video is ready." if episode_video else "Your generated episode scene is ready."), provider_job_id=video_id,
             progress=int(job.get("progress") or 100),
+            duration_seconds=float(episode.actual_duration_seconds) if episode and episode.actual_duration_seconds else None,
         )
     except Exception as exc:
         log.warning("Video teaser failed for %s: %s", session_id, exc)
@@ -731,10 +1064,14 @@ async def render_video_teaser(
     background_tasks: BackgroundTasks,
     episode_number: int | None = None,
 ):
-    """Make one creator-confirmed 20-second teaser, never an automatic full video."""
+    """Make one creator-confirmed visual episode, never an automatic provider spend."""
     s = load_session(session_id)
     if not s or not s.creative_dna:
         raise HTTPException(404, "Session not found")
+    if s.preferences.output_mode != "video":
+        raise HTTPException(409, "Audio series does not create video")
+    if not _has_two_series_videos(s):
+        raise HTTPException(409, "Upload both source videos before creating the video episode")
     active_number = episode_number or s.active_episode_number
     episode = _series_episode(s, active_number) if s.episodes else None
     if episode_number is not None and not episode:
@@ -745,12 +1082,37 @@ async def render_video_teaser(
         raise HTTPException(409, "Plan the visual version before making a teaser")
     if current and current.status == "rendering":
         raise HTTPException(409, "A teaser is already rendering")
+
+    # A video-series episode is an editorial cut of the two supplied videos,
+    # with the approved audio as the timing master. It is deterministic, uses
+    # both source files, and stays exactly as long as the audio episode.
+    uploaded_video = _compose_uploaded_video_episode(session_id, episode)
+    if s.preferences.output_mode == "video" and not uploaded_video:
+        raise HTTPException(503, "The two source videos could not be cut to the audio master")
+    if uploaded_video and episode:
+        result = VisualEpisodeResult(
+            status="ready",
+            url=f"/media/{session_id}/{uploaded_video.name}",
+            message=f"Your two source videos are cut to the {round(episode.actual_duration_seconds or 90)}-second audio master.",
+            duration_seconds=float(episode.actual_duration_seconds or 90),
+            progress=100,
+        )
+        s.visual_episode = result
+        s.active_episode_number = episode.number
+        episode.visual_episode = result
+        save_session(s)
+        await emit(session_id, "visual_director", "artifact", {
+            "episode_number": episode.number,
+            "visual_episode": result.model_dump(),
+        })
+        return result.model_dump()
     try:
-        job = await start_video_teaser(s.creative_dna, plan)
+        reference = _prepared_place_reference(session_id, s.visual_assets, episode.number if episode else None)
+        job = await start_video_teaser(s.creative_dna, plan, reference)
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
     result = VisualEpisodeResult(
-        status="rendering", message="Making your 20-second story teaser.",
+        status="rendering", message="Building your audio-synced episode video from its story scene.",
         provider_job_id=job["id"], progress=int(job.get("progress") or 0),
     )
     s.visual_episode = result
@@ -763,6 +1125,31 @@ async def render_video_teaser(
         "episode_number": episode.number if episode else None,
         "visual_episode": result.model_dump(),
     })
+    return result.model_dump()
+
+
+@app.post("/api/sessions/{session_id}/visual-episode/compose")
+async def compose_existing_episode_video(session_id: str, episode_number: int | None = None):
+    """Turn an already-completed generated scene into its full episode video without another provider call."""
+    s = load_session(session_id)
+    if not s:
+        raise HTTPException(404, "Session not found")
+    episode = _series_episode(s, episode_number or s.active_episode_number) if s.episodes else None
+    result = episode.visual_episode if episode else s.visual_episode
+    if not result or not result.url:
+        raise HTTPException(409, "Create the visual scene before packaging the episode video")
+    source = SESSIONS_DIR / session_id / "visual" / Path(result.url).name
+    output = _compose_episode_video(session_id, episode, source)
+    if not output:
+        raise HTTPException(409, "The episode audio and scene are needed before packaging the video")
+    result.status = "ready"
+    result.url = f"/media/{session_id}/{output.name}"
+    result.message = "Your full episode video is ready."
+    s.visual_episode = result
+    if episode:
+        episode.visual_episode = result
+    save_session(s)
+    await emit(session_id, "visual_director", "artifact", {"visual_episode": result.model_dump()})
     return result.model_dump()
 
 

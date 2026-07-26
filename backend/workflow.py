@@ -3,7 +3,7 @@ Workflow — deterministic state machine that orchestrates all agents.
 Each stage streams tokens via SSE queue, has a hard timeout + circuit breaker fallback.
 """
 from __future__ import annotations
-import asyncio, json, os, uuid
+import asyncio, json, os, re, uuid
 from pathlib import Path
 from typing import Callable, Awaitable
 from openai import AsyncOpenAI
@@ -33,7 +33,7 @@ from agents.supervisor import (
 from agents.audio_director import generate_voice_lines
 from agents.visual_director import plan_visual_episode
 from agents.voice_cameo import clone_voice, preview_cameo, delete_cameo
-from audio_mixer import mix_timeline
+from audio_mixer import mix_timeline, ensure_minimum_duration
 import logging
 
 log = logging.getLogger("nolan.workflow")
@@ -357,6 +357,10 @@ async def run_audio_render(
         if demo_audio.exists():
             import shutil
             shutil.copy(str(demo_audio), str(out_path))
+            try:
+                ensure_minimum_duration(out_path)
+            except Exception as exc:
+                log.warning("Could not enforce replay audio duration: %s", exc)
             await emit(sid, "audio_director", "complete", {"url": public_url, "episode_number": episode_number})
             return public_url
         # Replay must stay fully offline. Do not fall through to a live provider
@@ -385,6 +389,12 @@ async def run_audio_render(
             language=audio_language,
         )
         mix_timeline(timeline, out_path)
+        try:
+            ensure_minimum_duration(out_path)
+        except Exception as exc:
+            # A test/replay mixer may intentionally provide a tiny placeholder
+            # file; never turn an otherwise valid URL into a provider failure.
+            log.warning("Could not enforce minimum audio duration: %s", exc)
         return public_url
 
     url, degraded = await with_resilience(
@@ -427,7 +437,15 @@ def _sync_legacy_episode_fields(session: Session, episode: StoryEpisode) -> None
     session.active_episode_number = episode.number
     session.production_script = episode.production_script
     session.constitution_report = episode.constitution_report
-    session.audio_url = episode.audio_url
+    # A later episode is drafted before it has media. Do not let that empty
+    # draft erase the already-rendered audio pointer used by legacy clients;
+    # the canonical per-episode URLs remain in session.episodes.
+    other_episode_has_audio = any(
+        item.number != episode.number and item.audio_url
+        for item in session.episodes
+    )
+    if episode.audio_url or not other_episode_has_audio:
+        session.audio_url = episode.audio_url
     session.cover_image_url = episode.cover_image_url
 
 
@@ -565,18 +583,29 @@ async def run_confirmed_episode_render(session_id: str, episode_number: int) -> 
             episode.actual_duration_seconds = round(len(rendered) / 1000, 1)
         except Exception:
             episode.actual_duration_seconds = float(episode.production_script.estimated_duration_seconds)
-        # When the creator supplied a picture, place, or real clip, create the
-        # matching edit plan from this exact approved script. This is cheap and
-        # deterministic; it does not start a paid video render on its own.
-        if session.visual_assets and session.creative_dna:
+        # Video mode creates a deterministic edit plan from the two required
+        # source videos. Audio mode stays audio-only; poster art is separate
+        # from the episode media and never unlocks a visual render.
+        series_videos = [
+            asset for asset in session.visual_assets
+            if asset.kind == "video" and asset.consented and asset.filename.startswith("series-video_")
+        ]
+        if session.preferences.output_mode == "video" and len(series_videos) >= 2 and session.creative_dna:
             try:
-                plan = await plan_visual_episode(session.creative_dna, episode.production_script, session.visual_assets)
-                plan.portrait_consent = any(asset.kind == "photo" and asset.consented for asset in session.visual_assets)
-                plan.live_video_consent = any(asset.kind == "video" and asset.consented for asset in session.visual_assets)
+                target_duration = round(episode.actual_duration_seconds or episode.production_script.estimated_duration_seconds or 90)
+                plan = await plan_visual_episode(
+                    session.creative_dna,
+                    episode.production_script,
+                    series_videos,
+                    target_duration_seconds=target_duration,
+                )
+                plan.portrait_consent = False
+                plan.live_video_consent = True
                 episode.visual_episode_plan = plan
                 episode.visual_episode = VisualEpisodeResult(
                     status="planned",
-                    message="Your uploaded media is now matched to this episode's story beats.",
+                    message=f"Both source videos are mapped to the {target_duration}-second audio master.",
+                    duration_seconds=float(target_duration),
                 )
             except Exception as exc:
                 log.warning("Visual plan failed for episode %s: %s", episode_number, exc)
@@ -686,6 +715,44 @@ async def run_episode_revision(session_id: str, episode_number: int, feedback: E
         "status": "EPISODE_DRAFT_READY",
         "episode_number": episode_number,
     })
+
+
+def apply_constitution_repair_to_script(script: ProductionScript, repair: str) -> ProductionScript:
+    """Apply the supervisor's short repair suggestion without another model call."""
+    updated = script.model_copy(deep=True)
+    suggestion = repair.strip()
+
+    # Most live repairs contain the exact replacement inside quotes. This is
+    # the fastest and safest path for dialogue in any supported language.
+    quoted = re.findall(r'["“](.+?)["”]', suggestion, flags=re.DOTALL)
+    replacement = quoted[-1].strip() if quoted else ""
+
+    # Offline Constitution fallbacks use SPEAKER: line or UNKNOWN VOICE: line.
+    speaker_match = re.search(r'(?m)^(?:[A-Z][A-Z _-]{2,}|CHARACTER|PROTAGONIST):\s*(.+)$', suggestion)
+    if not replacement and speaker_match:
+        replacement = speaker_match.group(1).strip()
+
+    dialogue_indexes = [
+        index for index, line in enumerate(updated.lines)
+        if line.type == "dialogue" and (line.text or "").strip()
+    ]
+    if replacement and dialogue_indexes:
+        target_index = dialogue_indexes[-1]
+        target = updated.lines[target_index]
+        updated.lines[target_index] = target.model_copy(
+            update={"text": replacement, "emotion": target.emotion or "tense"}
+        )
+        return updated
+
+    # If the suggestion is a cue-only repair, append an audio-native cue.
+    cue_match = re.search(r'\[(?:SFX|AMBIENCE|MUSIC):\s*(.+?)\]', suggestion, flags=re.IGNORECASE | re.DOTALL)
+    if cue_match:
+        updated.lines.append(ProductionLine(type="sfx", description=cue_match.group(1).strip(), duration_seconds=2.0))
+        return updated
+
+    # Last-resort fallback: make the repair audible instead of dropping it.
+    updated.lines.append(ProductionLine(type="dialogue", character="Nolan", text=suggestion, emotion="tense"))
+    return updated
 
 
 # ─── Main Produce Workflow ────────────────────────────────────────────────────

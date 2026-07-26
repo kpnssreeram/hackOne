@@ -31,10 +31,15 @@ export const api = {
     })
     return jsonOrThrow(r)
   },
-  async updatePreferences(sessionId: string, outputLanguage: string, voiceCast: Record<string, string> = {}) {
+  async updatePreferences(
+    sessionId: string,
+    outputLanguage: string,
+    voiceCast: Record<string, string> = {},
+    outputMode: 'audio' | 'video' = 'audio',
+  ) {
     const r = await fetch(`${API}/api/sessions/${sessionId}/preferences`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ output_language: outputLanguage, voice_cast: voiceCast }),
+      body: JSON.stringify({ output_language: outputLanguage, output_mode: outputMode, voice_cast: voiceCast }),
     })
     return jsonOrThrow(r)
   },
@@ -91,6 +96,14 @@ export const api = {
     })
     return jsonOrThrow(r)
   },
+  async applyConstitutionRepair(sessionId: string, episodeNumber: number, ruleNumber: number, repair: string) {
+    const r = await fetch(`${API}/api/sessions/${sessionId}/episodes/${episodeNumber}/constitution-repair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rule_number: ruleNumber, repair }),
+    })
+    return jsonOrThrow(r)
+  },
   async renderAudio(sessionId: string) {
     const r = await fetch(`${API}/api/sessions/${sessionId}/render-audio`, { method: 'POST' })
     return jsonOrThrow(r)
@@ -123,9 +136,31 @@ export const api = {
     const r = await fetch(`${API}/api/sessions/${sessionId}/voice-cameo`, { method: 'DELETE' })
     return jsonOrThrow(r)
   },
-  async generateCoverImage(sessionId: string, episodeNumber?: number) {
+  async generateCoverImage(sessionId: string, episodeNumber?: number, posterPrompt = '') {
     const suffix = episodeNumber ? `?episode_number=${episodeNumber}` : ''
-    const r = await fetch(`${API}/api/sessions/${sessionId}/cover-image${suffix}`, { method: 'POST' })
+    const r = await fetch(`${API}/api/sessions/${sessionId}/cover-image${suffix}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ poster_prompt: posterPrompt }),
+    })
+    return jsonOrThrow(r)
+  },
+  async updateEpisodeScript(sessionId: string, episodeNumber: number, productionScript: unknown) {
+    const r = await fetch(`${API}/api/sessions/${sessionId}/episodes/${episodeNumber}/script`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ production_script: productionScript }),
+    })
+    return jsonOrThrow(r)
+  },
+  async uploadPosterReference(sessionId: string, file: File, consent: boolean) {
+    const fd = new FormData()
+    fd.append('asset', file)
+    fd.append('consent', String(consent))
+    const r = await fetch(`${API}/api/sessions/${sessionId}/poster-reference`, { method: 'POST', body: fd })
+    return jsonOrThrow(r)
+  },
+  async uploadSeriesVideo(sessionId: string, slot: 'video_1' | 'video_2', file: File, consent: boolean) {
+    const fd = new FormData()
+    fd.append('asset', file)
+    fd.append('consent', String(consent))
+    const r = await fetch(`${API}/api/sessions/${sessionId}/series-videos/${slot}`, { method: 'POST', body: fd })
     return jsonOrThrow(r)
   },
   async uploadVisualAsset(sessionId: string, assetName: 'portrait' | 'live_video', file: File, consent: boolean) {
@@ -151,6 +186,11 @@ export const api = {
   async renderVideoTeaser(sessionId: string, episodeNumber?: number) {
     const suffix = episodeNumber ? `?episode_number=${episodeNumber}` : ''
     const r = await fetch(`${API}/api/sessions/${sessionId}/visual-episode/render${suffix}`, { method: 'POST' })
+    return jsonOrThrow(r)
+  },
+  async composeEpisodeVideo(sessionId: string, episodeNumber?: number) {
+    const suffix = episodeNumber ? `?episode_number=${episodeNumber}` : ''
+    const r = await fetch(`${API}/api/sessions/${sessionId}/visual-episode/compose${suffix}`, { method: 'POST' })
     return jsonOrThrow(r)
   },
   audioUrl(sessionId: string, file = 'pilot.mp3') {

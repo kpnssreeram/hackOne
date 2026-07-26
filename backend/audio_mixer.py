@@ -174,3 +174,27 @@ def mix_timeline(timeline: list[dict], out_path: Path) -> Path:
         mixed.export(output_file, format="mp3", bitrate="128k")
     log.info("Mixed real pilot → %s (%.1fs)", out_path, len(mixed) / 1000)
     return out_path
+
+
+def ensure_minimum_duration(path: Path, minimum_seconds: float = 60.0) -> Path:
+    """Guarantee a playable episode is at least one minute long.
+
+    The writer targets a much longer cut, but provider voices can occasionally
+    run fast. In that case, preserve the approved mix and extend its atmosphere
+    instead of returning an episode that violates the product contract.
+    """
+    if not _configure_ffmpeg() or not path.exists():
+        return path
+    from pydub import AudioSegment
+
+    audio = _decode_mp3(path)
+    minimum_ms = int(max(60.0, minimum_seconds) * 1000)
+    if len(audio) >= minimum_ms:
+        return path
+    missing_ms = minimum_ms - len(audio)
+    tail = _atmosphere("soft cinematic atmosphere", missing_ms, "ambience")
+    extended = audio + tail
+    with path.open("wb") as output_file:
+        extended.export(output_file, format="mp3", bitrate="128k")
+    log.info("Extended short episode → %s (%.1fs)", path, len(extended) / 1000)
+    return path
