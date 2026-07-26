@@ -1,3 +1,3 @@
-# hackOne
+# NOLAN
 Nolan is an *Imagination-to-Entertainment Studio* that transforms incomplete ideas into production-ready audio experiences while protecting the creator's original intent. A creator simply speaks an idea, Just speak. Maybe it's one sentence ,maybe it's complete nonsense.—"I had a dream where everyone forgot I existed except my dead brother." Instead of immediately generating a generic story, Nolan first uncovers the emotional DNA hidden inside the idea—fear, hope, mystery, nostalgia, conflict—and treats it as the foundation of everything that follows.
 We call this the *Creative DNA* of the story, because we felt if we lose that emotion in the first few seconds, then no matter how good the final script becomes, it won't feel like your story anymore.
