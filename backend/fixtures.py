@@ -7,7 +7,7 @@ Scenario: "I dreamed the entire world forgot me, but my dead brother kept
 """
 from __future__ import annotations
 from schemas import (
-    CreativeDNA, Protagonist, VisionCard, VisionSelection,
+    CreativeDNA, Protagonist, StoryCharacter, VisionCard, VisionSelection,
     NarrativeSceneGraph, Character, Relationship, Scene,
     DialogueLine, AudioCue, ProductionScript, ProductionLine,
     ConstitutionReport, ConstitutionCheck, CreativeLockDiff,
@@ -34,6 +34,23 @@ FIXTURE_DNA = CreativeDNA(
     symbols=["silent contact list", "cracked phone screen", "old voicemail", "empty hospital bed"],
     non_negotiables=["dead brother is the only one who remembers Maya", "mystery of why must remain unresolved at episode end"],
     tone=["mysterious", "emotional", "haunting"],
+    genre=["supernatural mystery", "emotional drama"],
+    story_references=["slow-burn mystery", "relationship-driven horror"],
+    characters=[
+        StoryCharacter(
+            name="Karan", role="brother",
+            relationship_to_protagonist="Maya's dead brother — the only one who remembers",
+            want="reach Maya before she disappears entirely",
+            secret_or_tension="his calls may not be coming from where she thinks",
+        ),
+        StoryCharacter(
+            name="Priya", role="best friend",
+            relationship_to_protagonist="childhood best friend who no longer recognises Maya",
+            want="to feel like something is missing but cannot name it",
+            secret_or_tension="she was the last person to see Karan alive",
+        ),
+    ],
+    premise="Maya has been erased from the living world, but her dead brother Karan keeps calling her phone — the only proof she ever existed.",
     creative_freedom=68,
     locked_fields=[],
 )
@@ -144,12 +161,12 @@ FIXTURE_CONSTITUTION = ConstitutionReport(
             evidence="Escalation: world forgets → mother forgets → dead brother calls. Each beat raises the stakes.", reason=None, repair=None),
         ConstitutionCheck(rule_number=4, rule="Character motivation preserved", passed=True,
             evidence="Maya's desire (to be remembered) and fear (erasure) are both present in her dialogue choices.", reason=None, repair=None),
-        ConstitutionCheck(rule_number=5, rule="Narration minimal — sound and dialogue carry weight", passed=False,
+        ConstitutionCheck(rule_number=5, rule="Sound purpose", passed=True,
+            evidence="Rain = isolation. Phone vibration = inciting event. Voicemail chime = supernatural intrusion. Wind = world responding to the break.", reason=None, repair=None),
+        ConstitutionCheck(rule_number=6, rule="Narration economy", passed=False,
             evidence="Line: 'Everyone forgot me today. My boss looked through me.' — this is telling, not showing.",
             reason="A line of internal narration replaces what could be a stronger, more audio-native beat.",
             repair="[SFX: office ambient noise fades — phone ringing stops when Maya answers]\nBOSS [cheerful, to someone else]: Great! So as I was saying to David—\nMAYA: ...I'm standing right here.\n[SILENCE: 1.0s]\nBOSS [confused]: Sorry, can I help you?"),
-        ConstitutionCheck(rule_number=6, rule="Every sound cue has narrative purpose", passed=True,
-            evidence="Rain = isolation. Phone vibration = inciting event. Voicemail chime = supernatural intrusion. Wind = world responding to the break.", reason=None, repair=None),
         ConstitutionCheck(rule_number=7, rule="Ends on unresolved consequential moment", passed=True,
             evidence="Dead brother called. He knew her name. The episode ends on that impossible fact with a question the audience must return to answer.", reason=None, repair=None),
         ConstitutionCheck(rule_number=8, rule="Creative DNA preserved", passed=True,
@@ -199,6 +216,37 @@ FIXTURE_REVISION_DIFF = CreativeLockDiff(
                 DialogueLine(character="KARAN", text="Come find the phone. Before someone else does.", emotion="flat warning", sfx_after="call drops — hard cut to silence"),
             ]
         )
+    ],
+    # Keep replay revision honest: these indexes replace the actual pilot
+    # lines, rather than merely showing a scene diff before rendering the old
+    # audio again.
+    changed_lines=[
+        {
+            "line_index": 12,
+            "line": {
+                "type": "dialogue", "character": "KARAN",
+                "text": "I see you, Maya. I am the only one who does.",
+                "emotion": "cold, deliberate",
+                "voice_note": "voicemail distortion — lower, slower",
+            },
+        },
+        {
+            "line_index": 14,
+            "line": {
+                "type": "dialogue", "character": "MAYA",
+                "text": "Karan? What's wrong with your voice?",
+                "emotion": "alarmed",
+            },
+        },
+        {
+            "line_index": 16,
+            "line": {
+                "type": "dialogue", "character": "KARAN",
+                "text": "Come find the phone. Before someone else does.",
+                "emotion": "flat warning",
+                "voice_note": "hard, threatening stillness",
+            },
+        },
     ],
 )
 

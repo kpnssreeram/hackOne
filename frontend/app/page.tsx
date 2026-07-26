@@ -1,5 +1,5 @@
 'use client'
-import { useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Mic, MicOff, Type, Loader2, Sparkles, Radio, ArrowRight, Zap } from 'lucide-react'
@@ -12,6 +12,16 @@ const EXAMPLES = [
   "A woman finds her own obituary — dated three days from now.",
 ]
 
+const LANGUAGE_OPTIONS = [
+  { value: 'auto', label: 'Use the language I speak/write' },
+  { value: 'en', label: 'English' },
+  { value: 'hi', label: 'Hindi' },
+  { value: 'ta', label: 'Tamil' },
+  { value: 'te', label: 'Telugu' },
+  { value: 'kn', label: 'Kannada' },
+  { value: 'ml', label: 'Malayalam' },
+]
+
 export default function Home() {
   const router = useRouter()
   const [mode, setMode] = useState<'voice' | 'text'>('text')
@@ -19,8 +29,32 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [textInput, setTextInput] = useState('')
+  const [outputLanguage, setOutputLanguage] = useState('auto')
   const mediaRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+
+  const releaseRecorder = (recorder: MediaRecorder | null) => {
+    recorder?.stream.getTracks().forEach(track => track.stop())
+    if (mediaRef.current === recorder) mediaRef.current = null
+  }
+
+  const cancelRecording = () => {
+    const recorder = mediaRef.current
+    if (!recorder) return
+    recorder.onstop = null
+    if (recorder.state !== 'inactive') recorder.stop()
+    releaseRecorder(recorder)
+    setRecording(false)
+  }
+
+  useEffect(() => () => {
+    const recorder = mediaRef.current
+    if (!recorder) return
+    recorder.onstop = null
+    if (recorder.state !== 'inactive') recorder.stop()
+    recorder.stream.getTracks().forEach(track => track.stop())
+    mediaRef.current = null
+  }, [])
 
   async function startRecording() {
     try {
@@ -40,13 +74,18 @@ export default function Home() {
   async function stopAndProcess() {
     setRecording(false)
     return new Promise<void>(resolve => {
-      if (!mediaRef.current) return resolve()
-      mediaRef.current.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        await launch(blob)
-        resolve()
+      const recorder = mediaRef.current
+      if (!recorder) return resolve()
+      recorder.onstop = async () => {
+        try {
+          const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+          await launch(blob)
+        } finally {
+          releaseRecorder(recorder)
+          resolve()
+        }
       }
-      mediaRef.current.stop()
+      recorder.stop()
     })
   }
 
@@ -65,12 +104,13 @@ export default function Home() {
         setStatus('Transcribing your idea with Whisper...')
         const fd = new FormData()
         fd.append('audio', audioBlob, 'idea.webm')
+        fd.append('language', outputLanguage)
         const res = await api.submitAudio(session_id, fd)
         transcript = res.transcript
       }
 
       setStatus('Launching Nolan Studio...')
-      router.push(`/session/${session_id}?transcript=${encodeURIComponent(transcript)}`)
+      router.push(`/session/${session_id}?transcript=${encodeURIComponent(transcript)}&language=${encodeURIComponent(outputLanguage)}`)
     } catch (err) {
       console.error(err)
       setStatus('Something went wrong. Please try again.')
@@ -110,7 +150,7 @@ export default function Home() {
         {/* Mode tabs */}
         <div className="flex gap-2 mb-5 bg-nolan-surface rounded-xl p-1">
           <button
-            onClick={() => setMode('text')}
+            onClick={() => { if (recording) cancelRecording(); setMode('text') }}
             className={`flex-1 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-all ${
               mode === 'text' ? 'bg-nolan-accent text-white' : 'text-nolan-muted hover:text-white'
             }`}
@@ -118,7 +158,7 @@ export default function Home() {
             <Type className="w-4 h-4" /> Type your idea
           </button>
           <button
-            onClick={() => setMode('voice')}
+            onClick={() => { if (recording) cancelRecording(); setMode('voice') }}
             className={`flex-1 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-all ${
               mode === 'voice' ? 'bg-nolan-accent text-white' : 'text-nolan-muted hover:text-white'
             }`}
@@ -201,6 +241,14 @@ export default function Home() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        <label className="block mt-4 text-xs text-nolan-muted">
+          Story and audio language
+          <select value={outputLanguage} onChange={e => setOutputLanguage(e.target.value)} disabled={loading}
+            className="mt-1 w-full bg-nolan-surface border border-nolan-border rounded-lg px-3 py-2 text-sm text-nolan-text focus:outline-none focus:border-nolan-accent">
+            {LANGUAGE_OPTIONS.map(language => <option key={language.value} value={language.value}>{language.label}</option>)}
+          </select>
+        </label>
       </motion.div>
 
       {/* How it works */}

@@ -1,6 +1,6 @@
 """
 Voice Cameo — consented instant voice cloning of the creator's own voice.
-Uses ElevenLabs IVC. Falls back silently to stock voice on any failure.
+Uses ElevenLabs IVC and reports when the connected plan does not include it.
 """
 from __future__ import annotations
 import os, io
@@ -9,7 +9,7 @@ from elevenlabs import VoiceSettings
 import logging
 
 log = logging.getLogger("nolan.voice_cameo")
-el = AsyncElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
+el = AsyncElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY") or "replay-placeholder")
 MODEL = "eleven_multilingual_v2"
 
 ENROLLMENT_TEXT = (
@@ -23,14 +23,23 @@ ENROLLMENT_TEXT = (
 PREVIEW_LINE = "I see you, Maya. I am the only one who does."
 
 
+class VoiceClonePlanRequired(RuntimeError):
+    """The connected ElevenLabs plan does not include Instant Voice Cloning."""
+
+
 async def clone_voice(audio_bytes: bytes, session_id: str) -> tuple[str | None, bool]:
     """
     Upload audio_bytes to ElevenLabs IVC.
     Returns (voice_id, requires_verification).
-    Returns (None, False) on any failure.
+    Raises VoiceClonePlanRequired when the account needs an ElevenLabs upgrade.
+    Returns (None, False) for other failures so the story can still use its
+    selected stock voice.
     """
     try:
-        result = await el.voices.ivc.create(
+        # ElevenLabs 1.50 exposes instant voice cloning as ``voices.add``.
+        # ``voices.ivc.create`` is not part of that SDK and made every clone
+        # request fall straight into the stock-voice fallback.
+        result = await el.voices.add(
             name=f"nolan-cameo-{session_id[:8]}",
             files=[io.BytesIO(audio_bytes)],
             remove_background_noise=True,
@@ -39,13 +48,23 @@ async def clone_voice(audio_bytes: bytes, session_id: str) -> tuple[str | None, 
                  result.voice_id, result.requires_verification)
         return result.voice_id, result.requires_verification
     except Exception as exc:
+        error_text = f"{exc} {getattr(exc, 'body', '')}".lower()
+        if (
+            "paid_plan_required" in error_text
+            or "can_not_use_instant_voice_cloning" in error_text
+            or "instant voice cloning" in error_text and "subscription" in error_text
+        ):
+            log.info("Voice Cameo cloning needs an ElevenLabs plan upgrade")
+            raise VoiceClonePlanRequired from exc
         log.warning("Voice Cameo cloning failed: %s — using stock voice", exc)
         return None, False
 
 
 async def preview_cameo(voice_id: str, text: str = PREVIEW_LINE) -> bytes:
     """Synthesise a short preview line with the cloned voice."""
-    gen = await el.text_to_speech.convert(
+    # The async SDK returns an async iterator directly; awaiting it raises
+    # before any preview bytes are generated.
+    gen = el.text_to_speech.convert(
         voice_id=voice_id,
         text=text,
         model_id=MODEL,

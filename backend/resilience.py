@@ -20,7 +20,7 @@ STAGE_TIMEOUTS: dict[str, float] = {
     "script":       float(os.getenv("TIMEOUT_SCRIPT",       "40")),
     "constitution": float(os.getenv("TIMEOUT_CONSTITUTION", "30")),
     "revision":     float(os.getenv("TIMEOUT_REVISION",     "35")),
-    "audio":        float(os.getenv("TIMEOUT_AUDIO",        "35")),
+    "audio":        float(os.getenv("TIMEOUT_AUDIO",        "180")),
 }
 
 
@@ -55,7 +55,10 @@ class CircuitBreaker:
 
     def record_failure(self):
         self._failures += 1
-        if self._failures >= self.failure_threshold and self._state == BreakerState.CLOSED:
+        # A failed half-open probe must start a new cooldown. Otherwise the
+        # breaker remains HALF_OPEN indefinitely and every request keeps
+        # reaching the unhealthy provider.
+        if self._failures >= self.failure_threshold and self._state in (BreakerState.CLOSED, BreakerState.HALF_OPEN):
             self._state = BreakerState.OPEN
             self._opened_at = time.monotonic()
             log.warning("[%s] circuit OPEN after %d failures", self.name, self._failures)

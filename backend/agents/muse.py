@@ -12,7 +12,9 @@ log = logging.getLogger("nolan.muse")
 
 # max_retries=0 — let OUR circuit breaker handle failures, not the SDK
 client = AsyncOpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
+    # A non-empty placeholder keeps replay/fallback mode bootable without
+    # provider credentials. Live calls still fail fast and use resilience.
+    api_key=os.getenv("OPENAI_API_KEY") or "replay-placeholder",
     max_retries=0,
     timeout=9.0,
 )
@@ -122,7 +124,7 @@ def _fallback_dna_from_transcript(transcript: str) -> CreativeDNA:
     )
 
 
-async def extract_dna(transcript: str, emit_token) -> CreativeDNA:
+async def extract_dna(transcript: str, emit_token, output_language: str = "auto") -> CreativeDNA:
     log.info("Muse: extracting DNA (%d chars)", len(transcript))
     await emit_token(f'Analysing: "{transcript[:80]}..."\n\n')
 
@@ -132,7 +134,7 @@ async def extract_dna(transcript: str, emit_token) -> CreativeDNA:
         model="gpt-4o-mini",   # faster, cheaper, handles Indian English well
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f'Input: "{transcript}"\n\nThink briefly about the core emotion, then output the JSON.'},
+            {"role": "user", "content": f'Input: "{transcript}"\n\nCreator output language: {output_language}. Preserve the input language unless the creator chose another one. Think briefly about the core emotion, then output the JSON.'},
         ],
         max_tokens=500,
         stream=True,
