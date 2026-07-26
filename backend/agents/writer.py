@@ -58,7 +58,7 @@ Return ONLY valid JSON matching ProductionScript schema. No markdown.
 
 Return this exact shape, with no wrapper or `scenes` field:
 {"title":"string","estimated_duration_seconds":90,"lines":[{"type":"ambience","description":"string","duration_seconds":2},{"type":"dialogue","character":"NAME","text":"string","emotion":"string"},{"type":"silence","duration_seconds":1},{"type":"sfx","description":"string","duration_seconds":1}]}
-Write 10-14 lines, including at least 7 dialogue lines. Every named character must come from the Creative DNA.
+Write 18-24 lines, including at least 14 dialogue lines and 230-300 spoken words (or an equivalent amount in the requested language). This must play for 80-100 seconds at a natural voice pace. Do not fake the length with a long ambience tail. Every named character must come from the Creative DNA.
 """
 
 SERIES_SYSTEM = """You are the series writer for Nolan, an emotional audio-story studio.
@@ -316,7 +316,8 @@ async def generate_script(
                 f"Creator feedback: {(feedback.model_dump_json() if feedback else 'None yet.')}\n"
                 f"{ending_instruction}"
                 f"{_dialogue_language_instruction(output_language)} "
-                "Write a ProductionScript JSON. Target 80-100 seconds. Audio-native. "
+                "Write a ProductionScript JSON with 18-24 lines, at least 14 dialogue lines, and enough spoken material for 80-100 seconds. "
+                "Do not claim 90 seconds unless the dialogue is genuinely long enough. Audio-native. "
                 "Use protagonist name and their specific situation. Return ONLY JSON."
             )},
         ],

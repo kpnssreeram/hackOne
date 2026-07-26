@@ -11,7 +11,7 @@ from schemas import (
     Session, WorkflowStatus, CreativeDNA, VisionCard, StoryCharacter,
     VisionSelection, ProductionLine, ProductionScript, ConstitutionReport,
     CreativeLockDiff, ChangeRequest, EpisodeFeedback, EpisodeOutline,
-    EpisodeStatus, SeriesPlan, StoryEpisode,
+    EpisodeStatus, SeriesPlan, StoryEpisode, VisualEpisodeResult,
 )
 from resilience import with_resilience
 from fixtures import (
@@ -31,6 +31,7 @@ from agents.supervisor import (
     _normalize_constitution_report,
 )
 from agents.audio_director import generate_voice_lines
+from agents.visual_director import plan_visual_episode
 from agents.voice_cameo import clone_voice, preview_cameo, delete_cameo
 from audio_mixer import mix_timeline
 import logging
@@ -564,6 +565,21 @@ async def run_confirmed_episode_render(session_id: str, episode_number: int) -> 
             episode.actual_duration_seconds = round(len(rendered) / 1000, 1)
         except Exception:
             episode.actual_duration_seconds = float(episode.production_script.estimated_duration_seconds)
+        # When the creator supplied a picture, place, or real clip, create the
+        # matching edit plan from this exact approved script. This is cheap and
+        # deterministic; it does not start a paid video render on its own.
+        if session.visual_assets and session.creative_dna:
+            try:
+                plan = await plan_visual_episode(session.creative_dna, episode.production_script, session.visual_assets)
+                plan.portrait_consent = any(asset.kind == "photo" and asset.consented for asset in session.visual_assets)
+                plan.live_video_consent = any(asset.kind == "video" and asset.consented for asset in session.visual_assets)
+                episode.visual_episode_plan = plan
+                episode.visual_episode = VisualEpisodeResult(
+                    status="planned",
+                    message="Your uploaded media is now matched to this episode's story beats.",
+                )
+            except Exception as exc:
+                log.warning("Visual plan failed for episode %s: %s", episode_number, exc)
         _sync_legacy_episode_fields(session, episode)
         update_status(session, WorkflowStatus.READY)
         await emit(session_id, "supervisor", "complete", {

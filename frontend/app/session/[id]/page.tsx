@@ -545,9 +545,9 @@ export default function SessionPage() {
     }
   }
 
-  const pollForSeries = useCallback(async (runId: number, done: (saved: any) => boolean) => {
+  const pollForSeries = useCallback(async (runId: number, done: (saved: any) => boolean, maxAttempts = 30) => {
     let latest: any = null
-    for (let attempt = 0; attempt < 30; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       await wait(1500)
       try {
         latest = await refreshSession()
@@ -626,8 +626,8 @@ export default function SessionPage() {
       await api.confirmEpisode(sessionId, episodeNumber)
       const ready = await pollForSeries(runId, saved =>
         saved.episodes?.some((item: StoryEpisode) => item.number === episodeNumber && item.status === 'READY' && item.audio_url),
-      )
-      if (!ready && isWorkflowActive(runId)) pushLine('audio_director', 'The audio take is taking longer than expected. Your script is saved—try again when ready.', 'error')
+      120)
+      if (!ready && isWorkflowActive(runId)) pushLine('audio_director', 'Your audio is still finishing. Keep this page open; it will appear here when ready.', 'status')
     } catch (error) {
       console.error(error)
       if (isWorkflowActive(runId)) pushLine('audio_director', 'Nolan could not start this audio take. Please try again.', 'error')
@@ -943,6 +943,13 @@ export default function SessionPage() {
       fd.append('audio', cameoFile, cameoFile.name)
       const res = await api.cloneVoice(sessionId, fd)
       if (res.success) {
+        const targetKey = cameoRole === 'narrator' ? 'NARRATOR' : (characterName || '').toUpperCase()
+        if (res.voice_id && targetKey) {
+          setVoiceCast(previous => ({ ...previous, [targetKey]: `voice:${res.voice_id}` }))
+          setVoiceOptions(previous => previous.some(voice => voice.voice_id === res.voice_id)
+            ? previous
+            : [...previous, { voice_id: res.voice_id, name: 'My voice', gender: '', category: 'cloned' }])
+        }
         setCameoStatus(`✓ Voice cloned successfully! Your voice will play ${targetLabel} in this episode.`)
         pushLine('audio_director', `Voice Cameo cloned — your voice will play ${targetLabel}.`, 'complete')
       } else if (res.requires_verification) {
@@ -1129,17 +1136,12 @@ export default function SessionPage() {
               </div>
               <div className="glass rounded-xl p-4 mt-3">
                 <p className="text-xs font-semibold text-white">Choose the voices</p>
-                <p className="text-[11px] text-nolan-muted mt-1">Pick a voice for each person, or choose “Use my voice” for the person you want to perform.</p>
+                <p className="text-[11px] text-nolan-muted mt-1">Pick a voice here. To use your own voice, record once below and choose who it plays.</p>
                 <div className="grid sm:grid-cols-2 gap-2 mt-3">
                   {voiceCastNames.map(name => (
-                    <div key={name} className={`flex items-center justify-between gap-2 rounded-lg bg-black/20 px-3 py-2 text-xs text-white ${isCameoTarget(name) ? 'ring-1 ring-nolan-accent/70' : ''}`}>
+                    <div key={name} className="flex items-center justify-between gap-2 rounded-lg bg-black/20 px-3 py-2 text-xs text-white">
                       <div className="min-w-0">
                         <span className="block truncate">{name}</span>
-                        <button type="button" onClick={() => selectCameoTarget(name)} disabled={cameoRecording}
-                          className={`mt-1 flex items-center gap-1 text-[10px] disabled:opacity-40 ${isCameoTarget(name) ? 'text-nolan-accent' : 'text-nolan-muted hover:text-white'}`}>
-                          {isCameoTarget(name) ? <CheckCircle className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
-                          {isCameoTarget(name) ? 'Your voice selected' : 'Use my voice'}
-                        </button>
                       </div>
                       <select value={castingChoice(name)}
                         onChange={e => setVoiceCast(prev => ({ ...prev, [name.toUpperCase()]: e.target.value }))}
@@ -1147,7 +1149,7 @@ export default function SessionPage() {
                         <option value="auto:neutral">Nolan chooses · neutral</option>
                         <option value="auto:feminine">Nolan chooses · feminine</option>
                         <option value="auto:masculine">Nolan chooses · masculine</option>
-                        {voiceOptions.length > 0 && <optgroup label="Your saved voices">
+                        {voiceOptions.length > 0 && <optgroup label="My saved voices">
                           {voiceOptions.map(voice => <option key={voice.voice_id} value={`voice:${voice.voice_id}`}>
                             {voice.name}{voice.gender ? ` · ${voice.gender}` : ''}
                           </option>)}
@@ -1441,11 +1443,11 @@ export default function SessionPage() {
                     </span>
                   </div>
                 )}
-                <details className="mt-3 border-t border-pink-300/15 pt-3">
-                  <summary className="cursor-pointer text-[10px] text-nolan-muted hover:text-pink-200">Optional: create a visual version</summary>
+                <details open className="mt-3 border-t border-pink-300/15 pt-3">
+                  <summary className="cursor-pointer text-[10px] text-pink-200">Video for this episode</summary>
                   <div className="mt-3">
                     {seriesPlan ? (
-                      <p className="mb-3 text-[10px] leading-4 text-nolan-muted">Use the media you added to the story plan above. Nolan will arrange a low-credit visual edit plan first; it will not generate a full video unless you later choose that.</p>
+                      <p className="mb-3 text-[10px] leading-4 text-nolan-muted">Your uploaded pictures, places, and clips are matched to this episode's audio story. Make a video teaser only when you want one.</p>
                     ) : <>
                       <input className="block w-full text-[10px] mb-2" type="file" accept="image/*" onChange={e => setPortraitFile(e.target.files?.[0] || null)} />
                       <input className="block w-full text-[10px] mb-3" type="file" accept="video/*" onChange={e => setLiveVideoFile(e.target.files?.[0] || null)} />
