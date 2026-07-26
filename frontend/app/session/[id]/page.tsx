@@ -7,7 +7,7 @@ import { api } from '@/lib/api'
 import {
   Mic, Lock, Unlock, Play, Pause, CheckCircle, XCircle,
   Sparkles, Radio, Loader2, Volume2, GitBranch, Shield,
-  Wand2, ChevronRight, ChevronDown, RefreshCw, Film, Upload, Bot, X, CircleDot,
+  Wand2, ChevronRight, ChevronDown, RefreshCw, Film, Upload, X, CircleDot,
 } from 'lucide-react'
 
 // ─── Step definition ──────────────────────────────────────────────────────────
@@ -1235,11 +1235,11 @@ export default function SessionPage() {
   return (
     <div className="min-h-screen flex flex-col">
       {/* ── Top Bar ── */}
-      <header className="sticky top-0 z-30 border-b border-nolan-border/60 bg-nolan-bg/85 px-4 py-3 backdrop-blur-xl lg:px-7">
+      <header className="studio-header sticky top-0 z-30 border-b border-nolan-border/60 px-4 py-3 backdrop-blur-xl lg:px-7">
         <div className="mx-auto flex max-w-6xl items-center gap-4">
           <div className="flex shrink-0 items-center gap-2">
-            <Radio className="w-4 h-4 text-nolan-accent" />
-            <span className="font-bold text-sm tracking-[0.16em] text-white">NOLAN</span>
+            <span className="nolan-mark" aria-hidden="true"><span /></span>
+            <span className="font-bold text-sm tracking-[0.2em] text-white">NOLAN</span>
           </div>
 
           <div className="creation-pipeline min-w-0 flex-1">
@@ -1258,9 +1258,9 @@ export default function SessionPage() {
           })}
         </div>
 
-          <button type="button" onClick={() => setJarvisOpen(true)} className="jarvis-trigger shrink-0" aria-label="Open Jarvis studio assistant">
-            <span className="jarvis-core"><Bot className="w-5 h-5" /></span>
-            <span className="hidden text-[10px] font-semibold tracking-[0.12em] text-nolan-accent md:inline">JARVIS</span>
+          <button type="button" onClick={() => setJarvisOpen(true)} className="jarvis-trigger shrink-0" aria-label="Open director's reel">
+            <span className="jarvis-core"><CircleDot className="w-5 h-5" /></span>
+            <span className="hidden text-[10px] font-semibold tracking-[0.12em] text-nolan-accent md:inline">REEL</span>
             {busy && <span className="jarvis-live" />}
           </button>
         </div>
@@ -1269,7 +1269,7 @@ export default function SessionPage() {
       {/* ── Body ── */}
       <div className="flex-1 min-w-0">
 
-        <main className="mx-auto flex w-full max-w-6xl flex-col gap-5 p-4 sm:p-6">
+        <main className="studio-workspace mx-auto flex w-full max-w-7xl flex-col gap-5 p-4 sm:p-8">
 
           {!dna && !busy && (
             <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-5">
@@ -1628,7 +1628,7 @@ export default function SessionPage() {
               <ScreenplayPaper script={scriptDraft} editing={scriptEditMode} busy={busy} error={scriptSaveError}
                 onEdit={() => setScriptEditMode(true)}
                 onCancel={() => { const episode = episodeByNumber(activeEpisodeNumber); if (episode?.production_script) setScriptDraft(JSON.parse(JSON.stringify(episode.production_script))); setScriptEditMode(false) }}
-                onChange={setScriptDraft} onSave={saveScreenplay} />
+                onChange={setScriptDraft} onSave={saveScreenplay} canGenerate={currentEpisode?.status === 'DRAFT_READY'} onGenerate={() => doConfirmEpisode(activeEpisodeNumber)} />
             </motion.section>
           )}
 
@@ -1638,7 +1638,7 @@ export default function SessionPage() {
               <SectionHeader icon={<Volume2 className="w-4 h-4 text-nolan-accent" />} label={seriesPlan ? `Episode ${audioEpisodeNumber || activeEpisodeNumber} audio` : 'Your audio story'} />
               <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
               {seriesPlan && scriptDraft && audioEpisodeNumber === activeEpisodeNumber && <ScreenplayPaper script={scriptDraft} editing={scriptEditMode} busy={busy} error={scriptSaveError}
-                onEdit={() => setScriptEditMode(true)} onCancel={() => setScriptEditMode(false)} onChange={setScriptDraft} onSave={saveScreenplay} compact />}
+                onEdit={() => setScriptEditMode(true)} onCancel={() => setScriptEditMode(false)} onChange={setScriptDraft} onSave={saveScreenplay} canGenerate={currentEpisode?.status === 'DRAFT_READY'} onGenerate={() => doConfirmEpisode(activeEpisodeNumber)} compact />}
               <div className="glass rounded-xl p-5 mt-2 border border-nolan-accent/30"
                 style={{ boxShadow: '0 0 30px rgba(108,71,255,0.1)' }}>
                 {seriesPlan && audioEpisodeNumber && audioEpisodeNumber !== activeEpisodeNumber && (
@@ -1795,17 +1795,17 @@ export default function SessionPage() {
         <AnimatePresence>
           {jarvisOpen && (
             <>
-              <motion.button type="button" aria-label="Close Jarvis" onClick={() => setJarvisOpen(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-40 bg-[#020814]/65 backdrop-blur-sm" />
+              <motion.button type="button" aria-label="Close director's reel" onClick={() => setJarvisOpen(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-40 bg-[#171417]/55 backdrop-blur-sm" />
               <motion.aside initial={{ x: -420, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -420, opacity: 0 }} transition={{ type: 'spring', stiffness: 280, damping: 28 }} className="jarvis-drawer fixed inset-y-0 left-0 z-50 flex w-full max-w-md flex-col border-r border-nolan-accent/30 bg-nolan-bg/95 shadow-2xl backdrop-blur-2xl">
                 <div className="flex items-center gap-3 border-b border-nolan-border/60 px-5 py-4">
-                  <span className="jarvis-core"><Bot className="w-5 h-5" /></span>
-                  <div className="min-w-0"><p className="text-xs font-bold tracking-[0.18em] text-white">JARVIS</p><p className="truncate text-[10px] text-nolan-muted">{studioUpdate.role} · {studioUpdate.text}</p></div>
-                  <button type="button" onClick={() => setJarvisOpen(false)} className="ml-auto rounded-full p-2 text-nolan-muted hover:bg-white/5 hover:text-white" aria-label="Close Jarvis"><X className="w-4 h-4" /></button>
+                  <span className="jarvis-core"><CircleDot className="w-5 h-5" /></span>
+                  <div className="min-w-0"><p className="text-xs font-bold tracking-[0.18em] text-white">DIRECTOR&apos;S REEL</p><p className="truncate text-[10px] text-nolan-muted">{studioUpdate.role} · {studioUpdate.text}</p></div>
+                  <button type="button" onClick={() => setJarvisOpen(false)} className="ml-auto rounded-full p-2 text-nolan-muted hover:bg-white/5 hover:text-white" aria-label="Close director's reel"><X className="w-4 h-4" /></button>
                 </div>
 
                 <div className="mx-5 mt-4 rounded-xl border border-nolan-accent/20 bg-nolan-accent/5 p-3">
                   <div className="flex items-center gap-2"><CircleDot className={`w-3.5 h-3.5 ${busy ? 'animate-pulse text-nolan-accent' : 'text-nolan-green'}`} /><span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-nolan-accent">{busy ? 'Live orchestration' : 'Studio ready'}</span></div>
-                  <p className="mt-1 text-[11px] leading-5 text-nolan-muted">Jarvis keeps the workflow visible while you stay focused on creating.</p>
+                  <p className="mt-1 text-[11px] leading-5 text-nolan-muted">A quiet production reel: story notes, live progress, and creative decisions in one place.</p>
                 </div>
 
           <div className="mt-4 flex min-h-0 flex-1 flex-col">
@@ -1941,9 +1941,9 @@ function EpisodeStatusPill({ status }: { status: EpisodeStatus }) {
   return <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-medium ${colors[status]}`}>{labels[status]}</span>
 }
 
-function ScreenplayPaper({ script, editing, busy, error, onEdit, onCancel, onChange, onSave, compact = false }: {
-  script: ProductionScript; editing: boolean; busy: boolean; error: string; compact?: boolean
-  onEdit: () => void; onCancel: () => void; onChange: (script: ProductionScript) => void; onSave: () => void
+function ScreenplayPaper({ script, editing, busy, error, onEdit, onCancel, onChange, onSave, onGenerate, canGenerate = false, compact = false }: {
+  script: ProductionScript; editing: boolean; busy: boolean; error: string; compact?: boolean; canGenerate?: boolean
+  onEdit: () => void; onCancel: () => void; onChange: (script: ProductionScript) => void; onSave: () => void; onGenerate: () => void
 }) {
   const updateLine = (index: number, field: keyof ScriptLine, value: string) => onChange({ ...script, lines: script.lines.map((line, i) => i === index ? { ...line, [field]: field === 'duration_seconds' ? Number(value) || 0 : value } : line) })
   return <div className={`screenplay-paper ${compact ? 'xl:mt-2' : 'mt-2'} rounded-xl p-5`}>
@@ -1953,7 +1953,7 @@ function ScreenplayPaper({ script, editing, busy, error, onEdit, onCancel, onCha
       if (editing) return <div key={index} className="rounded border border-amber-950/20 bg-amber-50/60 p-2"><div className="flex gap-2"><select value={line.type} onChange={e => updateLine(index, 'type', e.target.value)} className="w-24 bg-transparent text-[10px] text-stone-700"><option value="dialogue">Dialogue</option><option value="sfx">SFX</option><option value="ambience">Ambience</option><option value="music">Music</option><option value="silence">Silence</option></select>{line.type === 'dialogue' && <input value={line.character || ''} onChange={e => updateLine(index, 'character', e.target.value)} placeholder="Character" className="min-w-0 flex-1 bg-transparent text-[10px] font-bold uppercase text-stone-800 outline-none" />}</div><textarea value={cue} onChange={e => updateLine(index, line.type === 'dialogue' ? 'text' : 'description', e.target.value)} rows={2} className="mt-1 w-full resize-none bg-transparent text-xs leading-5 text-stone-800 outline-none" />{line.type === 'silence' && <input type="number" value={line.duration_seconds || 0} onChange={e => updateLine(index, 'duration_seconds', e.target.value)} className="w-16 bg-transparent text-[10px] text-stone-700 outline-none" />}</div>
       if (line.type === 'dialogue') return <div key={index} className="pl-8"><p className="text-[10px] font-bold uppercase tracking-[0.13em] text-stone-800">{line.character || 'NARRATOR'} {line.emotion ? `(${line.emotion})` : ''}</p><p className="mt-1 font-serif text-sm leading-6 text-stone-900">{cue}</p></div>
       return <p key={index} className="text-[10px] font-semibold uppercase tracking-[0.08em] text-stone-600">[{line.type}{cue ? ` — ${cue}` : ''}{line.duration_seconds ? ` · ${line.duration_seconds}s` : ''}]</p>
-    })}</div>{error && <p className="mt-3 text-[10px] text-red-700">{error}</p>}</div>
+    })}</div>{error && <p className="mt-3 text-[10px] text-red-700">{error}</p>}{!editing && canGenerate && <button onClick={onGenerate} disabled={busy} className="screenplay-generate mt-4 w-full rounded-lg py-2.5 text-[10px] font-bold uppercase tracking-[.14em] text-white disabled:opacity-40"><Volume2 className="mr-1.5 inline h-3.5 w-3.5" />Generate revised audio</button>}</div>
 }
 
 function VisionCard({ vision, selected, onSelect }:

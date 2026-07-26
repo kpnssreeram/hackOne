@@ -5,20 +5,22 @@ module.exports = {
     extend: {
       colors: {
         nolan: {
-          bg:      '#07111f',
-          surface: '#0c1a2d',
-          card:    '#10233d',
-          border:  '#24405f',
-          accent:  '#35b8ff',
-          gold:    '#f5c542',
-          red:     '#ff4d6d',
-          green:   '#50d5a5',
-          text:    '#edf6ff',
-          muted:   '#91a4ba',
+          bg:      '#faf7f0',
+          surface: '#f5f1e8',
+          card:    '#ffffff',
+          border:  '#e6ded1',
+          accent:  '#a67c4a',
+          gold:    '#c9a86c',
+          red:     '#b85345',
+          green:   '#4e8065',
+          text:    '#2d2d2d',
+          muted:   '#6b6255',
         },
       },
       fontFamily: {
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+        sans: ['IBM Plex Sans', 'Inter', 'system-ui', 'sans-serif'],
+        mono: ['Courier Prime', 'Courier New', 'monospace'],
+        serif: ['Libre Baskerville', 'Georgia', 'Times New Roman', 'serif'],
       },
       animation: {
         pulse_slow: 'pulse 3s cubic-bezier(0.4,0,0.6,1) infinite',

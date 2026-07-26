@@ -8,9 +8,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <body className="min-h-screen bg-nolan-bg text-nolan-text overflow-x-hidden">
-        {/* Ambient orbs */}
+        {/* Warm studio light — visual only, no application behavior lives here. */}
         <div className="orb orb-1" />
         <div className="orb orb-2" />
         <div className="orb orb-3" />
